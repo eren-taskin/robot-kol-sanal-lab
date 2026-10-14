@@ -67,7 +67,18 @@ All masses come from the URDF. Do not mix in the specification-sheet masses (105
 
 ### 3.4 Joint limits
 
-Copied from `open_manipulator_x.urdf` in task T02 and recorded here at that point. Until then, use ±π for joint 1 and ±1.7 rad for joints 2–4.
+Copied from `open_manipulator_x.urdf` in task T02 (joint `<limit lower upper>` attributes, rad):
+
+| Joint | Lower (rad) | Upper (rad) |
+|---|---|---|
+| 1 | −π | +π |
+| 2 | −1.5 | +1.5 |
+| 3 | −1.5 | +1.4 |
+| 4 | −1.7 | +1.97 |
+
+Source: <https://github.com/ROBOTIS-GIT/open_manipulator/blob/main/open_manipulator_description/urdf/open_manipulator_x/open_manipulator_x.urdf>, branch `main`, commit `d31000d90c679af9c982e73de8b12d777c5ff7dd` (read 2026-10-15). The same values are in `open_manipulator_x_arm.urdf.xacro` in the same folder.
+
+The limits are data. Parameter, kinematics and dynamics code never rejects a configuration for being outside them; they are checked only by inverse kinematics (§4.3) and by fault detection (§6.4).
 
 ### 3.5 Environments
 

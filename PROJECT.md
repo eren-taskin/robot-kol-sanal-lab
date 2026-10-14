@@ -112,7 +112,7 @@ Course rule (Lecture Note 1, §8): every member must be able to explain and defe
 | Task | Title | Tool | Status |
 |---|---|---|---|
 | T01 | Solution skeleton and CI | Claude Code | done |
-| T02 | Parameters, chain, planets, payload | Claude Code | not started |
+| T02 | Parameters, chain, planets, payload | Claude Code | done |
 | T03 | Kinematics | Claude Code | not started |
 | T04 | Dynamics | Claude Code | not started |
 | T05 | Plant, solvers, simulation | Codex | not started |
