@@ -131,7 +131,7 @@ p = [r cos q1, r sin q1, z],   ψ = θ4  (tool pitch below horizontal)
 
 ### 4.3 Inverse kinematics [eqs. 5–7]
 
-Input: target position p = (x, y, z), tool pitch ψ, branch (elbow up or elbow down).
+Input: target position p = (x, y, z), tool pitch ψ, branch (elbow up or elbow down), and an option `checkLimits` (default true).
 
 ```
 q1 = atan2(y, x)
@@ -144,7 +144,7 @@ q2 = β − e,  q3 = −β − φ,  q4 = ψ − q2 − q3
 ```
 
 - Unreachable if |cos φ| > 1. Return a failure result, never NaN and never an exception.
-- Also report failure when the solution violates the joint limits.
+- With `checkLimits = true` (the default), a solution outside the joint limits of §3.4 is a failure with reason `JointLimit`. With `checkLimits = false` the limits are ignored and the solution of the formulas above is returned. The angles are not wrapped; elbow-down solutions can lie outside the limits (q3 ≤ −β), which is why the option exists.
 - The two "reach back over the base" solutions [report §3.3] are not needed.
 
 ### 4.4 Jacobian and singularities [eqs. 8–9]
@@ -346,7 +346,7 @@ Each item is an automated test in `RobotArm.Tests`. Tolerances in brackets.
 |---|---|---|
 | V1 | Parameters equal Section 3; L2 and β computed, not typed | — |
 | V2 | FK equals `poses[*].tool_position` and `tool_pitch` in the vectors [1e-12] | §4.2 |
-| V3 | IK(FK(q)) = q for both branches; IK matches `inverse_kinematics` vectors [1e-9]; unreachable target returns failure | §4.3 |
+| V3 | IK matches `inverse_kinematics` vectors [1e-9]: `elbow_up` with `checkLimits = true`; `elbow_down` with `checkLimits = false`, and the same `elbow_down` targets return `JointLimit` with `checkLimits = true`. Round trip: q sampled inside the §3.4 limits, IK(FK(q)) on the same branch with `checkLimits = true` returns q [1e-9], for both branches. Unreachable target returns failure | §4.3 |
 | V4 | Jp equals central-difference derivative of (r, z, ψ) [1e-6]; det formula [1e-12] | §4.4 |
 | V5 | General M equals closed form and equals `poses[*].M` [1e-9 relative] | §5.2–5.3 |
 | V6 | M symmetric and positive definite in 1000 random poses | report §3.7 |
