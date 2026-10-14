@@ -1,6 +1,7 @@
 using RobotArm.Core.Dynamics;
 using RobotArm.Core.Model;
 using Xunit.Abstractions;
+using static System.FormattableString;
 using static RobotArm.Tests.DynamicsTestHelpers;
 
 namespace RobotArm.Tests;
@@ -37,7 +38,7 @@ public sealed class PayloadTests(ITestOutputHelper output)
 
     private static void AssertRel(double expected, double actual) =>
         Assert.True(Math.Abs(actual - expected) <= RelTol * Math.Abs(expected),
-            $"expected {expected:R}, actual {actual:R}, relative difference {Math.Abs(actual - expected) / Math.Abs(expected):E2}");
+            Invariant($"expected {expected:R}, actual {actual:R}, relative difference {Math.Abs(actual - expected) / Math.Abs(expected):E2}"));
 
     [Fact]
     public void WithPayload_HalfKilogram_MassCentreOfMassAndIyyMatchHandCalculation()
@@ -144,8 +145,8 @@ public sealed class PayloadTests(ITestOutputHelper output)
         var actual = GeneralInertia(new RecursiveNewtonEuler(loaded), pose.Q);
 
         var rel = MaxAbsDifference(expected, actual) / MaxAbs(expected);
-        output.WriteLine($"V14 pose {index}: general M vs vectors {rel:E3}");
-        Assert.True(rel <= DynamicsTestHelpers.RelTol, $"relative difference {rel:E3}");
+        output.WriteLine(Invariant($"V14 pose {index}: general M vs vectors {rel:E3}"));
+        Assert.True(rel <= DynamicsTestHelpers.RelTol, Invariant($"relative difference {rel:E3}"));
     }
 
     [Theory]
@@ -157,8 +158,8 @@ public sealed class PayloadTests(ITestOutputHelper output)
         new RecursiveNewtonEuler(s_arm.WithPayload(pose.PayloadKg)).BiasTorque(pose.Q, new double[4], Planet.Earth, h);
 
         var rel = MaxAbsDifference(pose.GravityEarth, h) / MaxAbs(pose.GravityEarth);
-        output.WriteLine($"V14 pose {index}: general g vs vectors {rel:E3}");
-        Assert.True(rel <= DynamicsTestHelpers.RelTol, $"relative difference {rel:E3}");
+        output.WriteLine(Invariant($"V14 pose {index}: general g vs vectors {rel:E3}"));
+        Assert.True(rel <= DynamicsTestHelpers.RelTol, Invariant($"relative difference {rel:E3}"));
     }
 
     [Fact]
@@ -182,9 +183,9 @@ public sealed class PayloadTests(ITestOutputHelper output)
             var relG = MaxAbsDifference(expectedG, h) / MaxAbs(expectedG);
             worstM = Math.Max(worstM, relM);
             worstG = Math.Max(worstG, relG);
-            Assert.True(relM <= DynamicsTestHelpers.RelTol, $"M: relative difference {relM:E3}");
-            Assert.True(relG <= DynamicsTestHelpers.RelTol, $"g: relative difference {relG:E3}");
+            Assert.True(relM <= DynamicsTestHelpers.RelTol, Invariant($"M: relative difference {relM:E3}"));
+            Assert.True(relG <= DynamicsTestHelpers.RelTol, Invariant($"g: relative difference {relG:E3}"));
         }
-        output.WriteLine($"V14 0.5 kg, 1000 random poses: max relative difference M {worstM:E3}, g {worstG:E3}");
+        output.WriteLine(Invariant($"V14 0.5 kg, 1000 random poses: max relative difference M {worstM:E3}, g {worstG:E3}"));
     }
 }

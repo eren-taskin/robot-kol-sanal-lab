@@ -2,6 +2,7 @@ using System.Diagnostics;
 using RobotArm.Core.Dynamics;
 using RobotArm.Core.Model;
 using Xunit.Abstractions;
+using static System.FormattableString;
 
 namespace RobotArm.Tests;
 
@@ -59,7 +60,7 @@ public sealed class DynamicsAllocationTests(ITestOutputHelper output)
         const string configuration = "Release";
 #endif
         output.WriteLine(
-            $"{configuration}: InertiaMatrix {swM.Elapsed.TotalMicroseconds / Calls:F3} µs/call, " +
-            $"BiasTorque {swH.Elapsed.TotalMicroseconds / Calls:F3} µs/call, allocated {allocated} bytes in {Calls} iterations");
+            Invariant($"{configuration}: InertiaMatrix {swM.Elapsed.TotalMicroseconds / Calls:F3} µs/call, ") +
+            Invariant($"BiasTorque {swH.Elapsed.TotalMicroseconds / Calls:F3} µs/call, allocated {allocated} bytes in {Calls} iterations"));
     }
 }

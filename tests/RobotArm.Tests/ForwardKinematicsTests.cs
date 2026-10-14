@@ -1,6 +1,7 @@
 using RobotArm.Core.Kinematics;
 using RobotArm.Core.Model;
 using G = RobotArm.Core.Model.OpenManipulatorXGeometry;
+using static System.FormattableString;
 
 namespace RobotArm.Tests;
 
@@ -19,7 +20,7 @@ public sealed class ForwardKinematicsTests
 
     private static void AssertClose(double expected, double actual, double tol, string what) =>
         Assert.True(Math.Abs(actual - expected) <= tol,
-            $"{what}: expected {expected:R}, actual {actual:R}, difference {Math.Abs(actual - expected):E2}");
+            Invariant($"{what}: expected {expected:R}, actual {actual:R}, difference {Math.Abs(actual - expected):E2}"));
 
     [Theory]
     [MemberData(nameof(PoseIndices))]
@@ -78,7 +79,7 @@ public sealed class ForwardKinematicsTests
             var expected = Rotations.Rz(q[0]) * Rotations.Ry(closed.Pitch);
             for (var r = 0; r < 3; r++)
                 for (var c = 0; c < 3; c++)
-                    AssertClose(expected[r, c], frames[3].Rotation[r, c], Tol, $"R4[{r},{c}]");
+                    AssertClose(expected[r, c], frames[3].Rotation[r, c], Tol, Invariant($"R4[{r},{c}]"));
         }
     }
 

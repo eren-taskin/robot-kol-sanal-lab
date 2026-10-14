@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace RobotArm.Core.Dynamics;
 
 /// <summary>
@@ -28,7 +30,8 @@ public static class Cholesky
                 d -= a[row + k] * a[row + k];
             if (!(d > 0.0) || !double.IsFinite(d))
                 throw new ArgumentException(
-                    $"The matrix is not positive definite: pivot {j} is {d:R} after elimination (SPEC §5.2, Cholesky).",
+                    string.Create(CultureInfo.InvariantCulture,
+                        $"The matrix is not positive definite: pivot {j} is {d:R} after elimination (SPEC §5.2, Cholesky)."),
                     nameof(a));
 
             var ljj = Math.Sqrt(d);

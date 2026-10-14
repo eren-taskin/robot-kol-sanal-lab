@@ -58,12 +58,12 @@ All masses come from the URDF. Do not mix in the specification-sheet masses (105
 |---|---|---|
 | Stall torque τmax | 4.1 N·m at 12 V | from data sheet |
 | Gear ratio N | 353.5 | from data sheet |
-| Encoder | 4096 counts per revolution | verify against data sheet in task T05 |
-| No-load speed | about 46 rpm (4.8 rad/s) at 12 V | verify against data sheet in task T05 |
+| Encoder | 4096 counts per revolution | from data sheet (checked in T05 against the ROBOTIS e-manual) |
+| No-load speed | about 46 rpm (4.8 rad/s) at 12 V | from data sheet (checked in T05 against the ROBOTIS e-manual) |
 | Rotor inertia Jm | unknown, default 0 | experiment parameter |
 | Viscous friction fv | default 0.01 N·m·s/rad | experiment parameter |
 | Coulomb friction fc | default 0.02 N·m | experiment parameter |
-| Smoothing speed ωs | 0.01 rad/s | numerical parameter |
+| Smoothing speed ωs | 0.1 rad/s | numerical parameter; sets the step-size limit of §6.2 |
 
 ### 3.4 Joint limits
 
@@ -267,9 +267,11 @@ The plant uses the true parameters. Every model-based controller holds its own c
 ### 6.2 Solver
 
 - Fixed-step RK4 [eq. 22], input held constant over the step (zero-order hold).
-- Default step h = 1 ms. Allowed range 0.1 ms to 5 ms.
+- Default step h = 0.5 ms. Allowed range 0.1 ms to 5 ms.
 - No allocations inside `Step`. Work arrays are created once.
 - Euler is also provided, for the teaching comparison of Note 1.
+
+**Step-size stability.** Near rest, friction acts like damping with coefficient d = fv + fc/ωs on each joint (the slope of §5.4 at q̇ = 0). RK4 is stable only if h·λmax < 2.78, where λmax is the largest eigenvalue of M(q)⁻¹·D and D = diag(d) (later also plus the controller's derivative gains). Above this limit a held arm chatters instead of staying still. With the defaults of §3.3 the limit is above 1 ms in every pose inside the limits; with ωs = 0.01 rad/s it was about 0.17 ms. The core provides the estimate (`StabilityEstimate.MaxStableStep`), and the UI shows a warning when the chosen h exceeds it.
 
 ### 6.3 Sampled control (software in the loop)
 
@@ -351,12 +353,12 @@ Each item is an automated test in `RobotArm.Tests`. Tolerances in brackets.
 | V5 | General M equals closed form and equals `poses[*].M` [1e-9 relative] | §5.2–5.3 |
 | V6 | M symmetric and positive definite in 1000 random poses | report §3.7 |
 | V7 | Bias torque with q̇ = 0 equals closed-form g and `gravity_earth` [1e-9] | §5.3 |
-| V8 | zᵀ(Ṁ − 2C)z = 0 for random q, q̇, z [1e-6], using the closed-form C | report §3.7 |
+| V8 | zᵀ(Ṁ − 2C)z = 0 for random q, q̇, z [1e-6], using the closed-form C. V8 alone does not detect errors in the velocity terms of RNEA; the C·q̇ comparison test added in T04 does. | report §3.7 |
 | V9 | Free motion (τ = 0, no friction, Jm = 0), Earth, x0 from vectors, 0.4 s at h = 2 ms: max energy drift < 1e-5 J | report §3.7 |
 | V10 | Same run with joint 1 free: p1 = Σ M1j q̇j drift < 1e-7 | report §3.7 |
 | V11 | Error at T = 0.4 s for h = 4, 2, 1 ms against the reference: successive ratios between 12 and 20 | report §3.7 |
 | V12 | State at 0.1, 0.2, 0.4 s with h = 1 ms equals `free_motion.reference_states` [5e-5] | vectors |
-| V13 | Statics: τ = g(q) holds the arm still for 1 s on every planet (max |q̇| < 1e-9) | report §3.7 |
+| V13 | Statics: τ = g(q) holds the arm still for 1 s on every planet, payload 0 and 0.5 kg, default friction, default h (max |q̇| < 1e-9) | report §3.7 |
 | V14 | Payload combination: total mass, combined centre of mass and inertia match a hand calculation; `poses` with `payload_kg = 0.5` match | §5.5 |
 | V15 | Saturation: commanded 10 N·m is applied as 4.1 N·m and flagged | §5.4 |
 | V16 | Determinism: same scenario and seed give identical logs | §8.3 |

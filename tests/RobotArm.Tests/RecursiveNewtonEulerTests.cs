@@ -1,6 +1,7 @@
 using RobotArm.Core.Dynamics;
 using RobotArm.Core.Model;
 using static RobotArm.Tests.DynamicsTestHelpers;
+using static System.FormattableString;
 
 namespace RobotArm.Tests;
 
@@ -42,7 +43,7 @@ public sealed class RecursiveNewtonEulerTests
                     expected[r] += m[r * 4 + c] * qdd[c];
             }
             var diff = MaxAbsDifference(expected, tau);
-            Assert.True(diff <= 1e-12 * MaxAbs(expected), $"difference {diff:E3}");
+            Assert.True(diff <= 1e-12 * MaxAbs(expected), Invariant($"difference {diff:E3}"));
         }
     }
 

@@ -97,7 +97,7 @@ public sealed class ParametersTests
         Assert.Equal(0.0, a.RotorInertia);
         Assert.Equal(0.01, a.ViscousFriction);
         Assert.Equal(0.02, a.CoulombFriction);
-        Assert.Equal(0.01, a.SmoothingSpeed);
+        Assert.Equal(0.1, a.SmoothingSpeed);
         Assert.Equal(2.0 * Math.PI / 4096.0, a.EncoderResolution);
         Assert.Equal(0.0, a.ReflectedRotorInertia);
     }

@@ -115,7 +115,7 @@ Course rule (Lecture Note 1, §8): every member must be able to explain and defe
 | T02 | Parameters, chain, planets, payload | Claude Code | done |
 | T03 | Kinematics | Claude Code | done |
 | T04 | Dynamics | Claude Code | done |
-| T05 | Plant, solvers, simulation | Codex | not started |
+| T05 | Plant, solvers, simulation | Codex | done |
 | T06 | Independent review of T02–T05 | Antigravity | not started |
 | T07 | Controllers and sampled loop | Codex | not started |
 | T08 | Trajectories, tasks, scenario, metrics, logging | Codex | not started |

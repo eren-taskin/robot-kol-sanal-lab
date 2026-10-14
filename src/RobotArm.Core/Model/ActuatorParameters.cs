@@ -13,7 +13,7 @@ public sealed record ActuatorParameters
     private readonly double _rotorInertia;
     private readonly double _viscousFriction = 0.01;
     private readonly double _coulombFriction = 0.02;
-    private readonly double _smoothingSpeed = 0.01;
+    private readonly double _smoothingSpeed = 0.1;
 
     /// <summary>Stall torque τmax in N·m, the saturation limit of SPEC §5.4. SPEC §3.3: 4.1 N·m at 12 V.</summary>
     public double StallTorque
@@ -29,7 +29,10 @@ public sealed record ActuatorParameters
         init => _gearRatio = Positive(value, nameof(GearRatio), "");
     }
 
-    /// <summary>Encoder counts per output revolution. SPEC §3.3: 4096 (to be verified in T05).</summary>
+    /// <summary>
+    /// Encoder counts per output revolution. SPEC §3.3: 4096, as in the ROBOTIS e-manual for the XM430-W350
+    /// (resolution 4096 pulse/rev, https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/).
+    /// </summary>
     public int EncoderCountsPerRevolution
     {
         get => _encoderCountsPerRevolution;
@@ -39,7 +42,10 @@ public sealed record ActuatorParameters
                 "Encoder counts per revolution must be greater than 0 (SPEC §3.3).");
     }
 
-    /// <summary>No-load speed in rad/s. SPEC §3.3: about 46 rpm, 4.8 rad/s, at 12 V (to be verified in T05).</summary>
+    /// <summary>
+    /// No-load speed in rad/s. SPEC §3.3: 46 rpm at 12 V (4.82 rad/s, rounded to 4.8), as in the ROBOTIS e-manual
+    /// for the XM430-W350 (https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/).
+    /// </summary>
     public double NoLoadSpeed
     {
         get => _noLoadSpeed;
@@ -67,7 +73,10 @@ public sealed record ActuatorParameters
         init => _coulombFriction = NonNegative(value, nameof(CoulombFriction), " N·m");
     }
 
-    /// <summary>Smoothing speed ωs of the tanh friction model in rad/s. SPEC §3.3: 0.01.</summary>
+    /// <summary>
+    /// Smoothing speed ωs of the tanh friction model in rad/s. SPEC §3.3: 0.1. Together with fc it sets the
+    /// largest stable step (SPEC §6.2, docs/DECISIONS.md D3).
+    /// </summary>
     public double SmoothingSpeed
     {
         get => _smoothingSpeed;

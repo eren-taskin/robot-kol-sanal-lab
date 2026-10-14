@@ -1,6 +1,7 @@
 using RobotArm.Core.Dynamics;
 using RobotArm.Core.Model;
 using Xunit.Abstractions;
+using static System.FormattableString;
 using static RobotArm.Tests.DynamicsTestHelpers;
 
 namespace RobotArm.Tests;
@@ -43,10 +44,10 @@ public sealed class GravityTests(ITestOutputHelper output)
             var diff = MaxAbsDifference(expected, h);
             var scale = MaxAbs(expected);
             Assert.True(diff <= RelTol * scale,
-                $"{planet.Key}, q = [{string.Join(", ", q)}]: difference {diff:E3}, scale {scale:E3}");
+                Invariant($"{planet.Key}, q = [{TestFormat.Join(q)}]: difference {diff:E3}, scale {scale:E3}"));
             if (scale > 0.0) worst = Math.Max(worst, diff / scale);
         }
-        output.WriteLine($"V7 {planet.Key} (g = {planet.G}): max |Δg|/max|g| = {worst:E3}");
+        output.WriteLine(Invariant($"V7 {planet.Key} (g = {planet.G}): max |Δg|/max|g| = {worst:E3}"));
     }
 
     [Fact]
@@ -82,9 +83,9 @@ public sealed class GravityTests(ITestOutputHelper output)
         var scale = MaxAbs(pose.GravityEarth);
         var relGeneral = MaxAbsDifference(pose.GravityEarth, h) / scale;
         var relClosed = MaxAbsDifference(pose.GravityEarth, closed) / scale;
-        output.WriteLine($"V7 pose {index}: general vs vectors {relGeneral:E3}, closed form vs vectors {relClosed:E3}");
-        Assert.True(relGeneral <= RelTol, $"general g vs vectors: relative difference {relGeneral:E3}");
-        Assert.True(relClosed <= RelTol, $"closed-form g vs vectors: relative difference {relClosed:E3}");
+        output.WriteLine(Invariant($"V7 pose {index}: general vs vectors {relGeneral:E3}, closed form vs vectors {relClosed:E3}"));
+        Assert.True(relGeneral <= RelTol, Invariant($"general g vs vectors: relative difference {relGeneral:E3}"));
+        Assert.True(relClosed <= RelTol, Invariant($"closed-form g vs vectors: relative difference {relClosed:E3}"));
     }
 
     [Fact]
@@ -103,7 +104,7 @@ public sealed class GravityTests(ITestOutputHelper output)
             new RecursiveNewtonEuler(s_arm.WithPayload(mp)).BiasTorque(q, s_zero, planet, h);
 
             var scale = MaxAbs(expected);
-            Assert.True(MaxAbsDifference(expected, h) <= RelTol * scale, $"{key}: expected [{string.Join(", ", expected)}], got [{string.Join(", ", h)}]");
+            Assert.True(MaxAbsDifference(expected, h) <= RelTol * scale, Invariant($"{key}: expected [{TestFormat.Join(expected)}], got [{TestFormat.Join(h)}]"));
             checkedEntries++;
         }
         Assert.True(checkedEntries > 0);

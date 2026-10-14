@@ -1,6 +1,7 @@
 using RobotArm.Core.Kinematics;
 using RobotArm.Core.Model;
 using G = RobotArm.Core.Model.OpenManipulatorXGeometry;
+using static System.FormattableString;
 
 namespace RobotArm.Tests;
 
@@ -37,7 +38,7 @@ public sealed class PlanarJacobianTests
                 double[] numeric = [(a.R - b.R) / (2 * Step), (a.Z - b.Z) / (2 * Step), (a.Pitch - b.Pitch) / (2 * Step)];
                 for (var row = 0; row < 3; row++)
                     Assert.True(Math.Abs(jp[row, col] - numeric[row]) <= DerivativeTol,
-                        $"Jp[{row},{col}] = {jp[row, col]:R}, numeric {numeric[row]:R}");
+                        Invariant($"Jp[{row},{col}] = {jp[row, col]:R}, numeric {numeric[row]:R}"));
             }
         }
     }
@@ -51,7 +52,7 @@ public sealed class PlanarJacobianTests
             var q = RandomPose(rng);
             var formula = PlanarJacobian.Determinant(q);
             var direct = PlanarJacobian.Compute(q).Determinant;
-            Assert.True(Math.Abs(formula - direct) <= DeterminantTol, $"formula {formula:R}, direct {direct:R}");
+            Assert.True(Math.Abs(formula - direct) <= DeterminantTol, Invariant($"formula {formula:R}, direct {direct:R}"));
         }
     }
 
@@ -65,7 +66,7 @@ public sealed class PlanarJacobianTests
         var product = PlanarJacobian.Compute(q) * inverse;
         for (var r = 0; r < 3; r++)
             for (var c = 0; c < 3; c++)
-                Assert.True(Math.Abs(product[r, c] - (r == c ? 1.0 : 0.0)) <= 1e-12, $"(Jp·Jp⁻¹)[{r},{c}] = {product[r, c]:R}");
+                Assert.True(Math.Abs(product[r, c] - (r == c ? 1.0 : 0.0)) <= 1e-12, Invariant($"(Jp·Jp⁻¹)[{r},{c}] = {product[r, c]:R}"));
     }
 
     [Theory]

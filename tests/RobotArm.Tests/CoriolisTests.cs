@@ -1,6 +1,7 @@
 using RobotArm.Core.Dynamics;
 using RobotArm.Core.Model;
 using Xunit.Abstractions;
+using static System.FormattableString;
 using static RobotArm.Tests.DynamicsTestHelpers;
 
 namespace RobotArm.Tests;
@@ -48,9 +49,9 @@ public sealed class CoriolisTests(ITestOutputHelper output)
 
             var scale = Norm2(z) * Norm2(z) * Norm2(qd) * maxDm;
             worst = Math.Max(worst, Math.Abs(value) / scale);
-            Assert.True(Math.Abs(value) <= 1e-6 * scale, $"zᵀ(Ṁ − 2C)z = {value:E3}, scale {scale:E3}");
+            Assert.True(Math.Abs(value) <= 1e-6 * scale, Invariant($"zᵀ(Ṁ − 2C)z = {value:E3}, scale {scale:E3}"));
         }
-        output.WriteLine($"V8 max |zᵀ(Ṁ − 2C)z| / (|z|²|q̇| max|∂M/∂q|) over 200 states = {worst:E3}");
+        output.WriteLine(Invariant($"V8 max |zᵀ(Ṁ − 2C)z| / (|z|²|q̇| max|∂M/∂q|) over 200 states = {worst:E3}"));
     }
 
     /// <summary>
@@ -80,9 +81,9 @@ public sealed class CoriolisTests(ITestOutputHelper output)
 
             var rel = MaxAbsDifference(expected, h) / MaxAbs(expected);
             worst = Math.Max(worst, rel);
-            Assert.True(rel <= 1e-6, $"q = [{string.Join(", ", q)}], q̇ = [{string.Join(", ", qd)}]: relative difference {rel:E3}");
+            Assert.True(rel <= 1e-6, Invariant($"q = [{TestFormat.Join(q)}], q̇ = [{TestFormat.Join(qd)}]: relative difference {rel:E3}"));
         }
-        output.WriteLine($"C(q, q̇)q̇ closed form vs general bias torque (g = 0), 200 states: max relative difference = {worst:E3}");
+        output.WriteLine(Invariant($"C(q, q̇)q̇ closed form vs general bias torque (g = 0), 200 states: max relative difference = {worst:E3}"));
     }
 
     private static double Norm2(double[] v) => Math.Sqrt(v.Sum(x => x * x));

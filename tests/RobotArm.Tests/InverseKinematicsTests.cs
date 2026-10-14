@@ -1,6 +1,7 @@
 using RobotArm.Core.Kinematics;
 using RobotArm.Core.Model;
 using G = RobotArm.Core.Model.OpenManipulatorXGeometry;
+using static System.FormattableString;
 
 namespace RobotArm.Tests;
 
@@ -25,7 +26,7 @@ public sealed class InverseKinematicsTests
     {
         for (var i = 0; i < 4; i++)
             Assert.True(Math.Abs(result.Q[i] - expected[i]) <= tol,
-                $"q{i + 1}: expected {expected[i]:R}, actual {result.Q[i]:R}, difference {Math.Abs(result.Q[i] - expected[i]):E2}");
+                Invariant($"q{i + 1}: expected {expected[i]:R}, actual {result.Q[i]:R}, difference {Math.Abs(result.Q[i] - expected[i]):E2}"));
     }
 
     [Theory]
@@ -35,7 +36,7 @@ public sealed class InverseKinematicsTests
         var c = TestVectors.Instance.InverseKinematics[index];
         var result = InverseKinematics.Solve(Target(c), c.TargetPitch, ElbowBranch.Up, checkLimits: true);
 
-        Assert.True(result.Success, $"failure {result.Failure}");
+        Assert.True(result.Success, Invariant($"failure {result.Failure}"));
         Assert.Equal(FailureReason.None, result.Failure);
         AssertAngles(c.ElbowUp, result, Tol);
     }
@@ -47,7 +48,7 @@ public sealed class InverseKinematicsTests
         var c = TestVectors.Instance.InverseKinematics[index];
         var result = InverseKinematics.Solve(Target(c), c.TargetPitch, ElbowBranch.Down, checkLimits: false);
 
-        Assert.True(result.Success, $"failure {result.Failure}");
+        Assert.True(result.Success, Invariant($"failure {result.Failure}"));
         AssertAngles(c.ElbowDown, result, Tol);
     }
 
@@ -124,10 +125,10 @@ public sealed class InverseKinematicsTests
             var tool = ForwardKinematics.ClosedForm(q);
             var result = InverseKinematics.Solve(tool.Position, tool.Pitch, branch, checkLimits: true);
 
-            Assert.True(result.Success, $"q = [{string.Join(", ", q)}]: failure {result.Failure}");
+            Assert.True(result.Success, Invariant($"q = [{TestFormat.Join(q)}]: failure {result.Failure}"));
             for (var i = 0; i < 4; i++)
                 Assert.True(Math.Abs(result.Q[i] - q[i]) <= Tol,
-                    $"q = [{string.Join(", ", q)}]: q{i + 1} = {result.Q[i]:R}, difference {Math.Abs(result.Q[i] - q[i]):E2}");
+                    Invariant($"q = [{TestFormat.Join(q)}]: q{i + 1} = {result.Q[i]:R}, difference {Math.Abs(result.Q[i] - q[i]):E2}"));
         }
     }
 
@@ -149,10 +150,10 @@ public sealed class InverseKinematicsTests
 
             var tool = ForwardKinematics.ClosedForm(q);
             var result = InverseKinematics.Solve(tool.Position, tool.Pitch, other, checkLimits: false);
-            Assert.True(result.Success, $"failure {result.Failure}");
+            Assert.True(result.Success, Invariant($"failure {result.Failure}"));
 
             var back = ForwardKinematics.ClosedForm(result.Q.ToArray());
-            Assert.True((back.Position - tool.Position).Length <= Tol, $"position error {(back.Position - tool.Position).Length:E2}");
+            Assert.True((back.Position - tool.Position).Length <= Tol, Invariant($"position error {(back.Position - tool.Position).Length:E2}"));
             Assert.True(Math.Abs(Math.IEEERemainder(back.Pitch - tool.Pitch, 2.0 * Math.PI)) <= Tol);
         }
     }

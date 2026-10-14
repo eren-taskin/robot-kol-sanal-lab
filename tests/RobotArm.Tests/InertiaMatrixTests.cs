@@ -1,6 +1,7 @@
 using RobotArm.Core.Dynamics;
 using RobotArm.Core.Model;
 using Xunit.Abstractions;
+using static System.FormattableString;
 using static RobotArm.Tests.DynamicsTestHelpers;
 
 namespace RobotArm.Tests;
@@ -44,9 +45,9 @@ public sealed class InertiaMatrixTests(ITestOutputHelper output)
             var actual = GeneralInertia(rnea, q);
             var rel = MaxAbsDifference(expected, actual) / MaxAbs(expected);
             worst = Math.Max(worst, rel);
-            Assert.True(rel <= RelTol, $"q = [{string.Join(", ", q)}]: relative difference {rel:E3}");
+            Assert.True(rel <= RelTol, Invariant($"q = [{TestFormat.Join(q)}]: relative difference {rel:E3}"));
         }
-        output.WriteLine($"V5 general M vs closed form, 1000 random poses: max |ΔM|/max|M| = {worst:E3}");
+        output.WriteLine(Invariant($"V5 general M vs closed form, 1000 random poses: max |ΔM|/max|M| = {worst:E3}"));
     }
 
     [Theory]
@@ -60,9 +61,9 @@ public sealed class InertiaMatrixTests(ITestOutputHelper output)
 
         var relGeneral = MaxAbsDifference(expected, general) / MaxAbs(expected);
         var relClosed = MaxAbsDifference(expected, closed) / MaxAbs(expected);
-        output.WriteLine($"V5 pose {index}: general vs vectors {relGeneral:E3}, closed form vs vectors {relClosed:E3}");
-        Assert.True(relGeneral <= RelTol, $"general M vs vectors: relative difference {relGeneral:E3}");
-        Assert.True(relClosed <= RelTol, $"closed-form M vs vectors: relative difference {relClosed:E3}");
+        output.WriteLine(Invariant($"V5 pose {index}: general vs vectors {relGeneral:E3}, closed form vs vectors {relClosed:E3}"));
+        Assert.True(relGeneral <= RelTol, Invariant($"general M vs vectors: relative difference {relGeneral:E3}"));
+        Assert.True(relClosed <= RelTol, Invariant($"closed-form M vs vectors: relative difference {relClosed:E3}"));
     }
 
     [Fact]
@@ -87,7 +88,7 @@ public sealed class InertiaMatrixTests(ITestOutputHelper output)
             for (var r = 0; r < 4; r++)
                 for (var c = 0; c < 4; c++)
                     quadratic += x[r] * m[r * 4 + c] * x[c];
-            Assert.True(quadratic > 0.0, $"xᵀMx = {quadratic:E3}");
+            Assert.True(quadratic > 0.0, Invariant($"xᵀMx = {quadratic:E3}"));
 
             Cholesky.Factor(m, 4);
         }
