@@ -1,13 +1,15 @@
+using RobotArm.Core.Dynamics;
 using RobotArm.Core.Model;
+using Xunit.Abstractions;
+using static RobotArm.Tests.DynamicsTestHelpers;
 
 namespace RobotArm.Tests;
 
 /// <summary>
-/// SPEC §5.5 (V14 of SPEC §11): payload combination.
-/// The comparison with the <c>payload_kg = 0.5</c> poses of test_vectors.json needs the inertia matrix
-/// and is added in task T04.
+/// SPEC §5.5 (V14 of SPEC §11): payload combination, checked by hand and, through the general dynamics
+/// of SPEC §5.2, against the <c>payload_kg = 0.5</c> poses of test_vectors.json (Jm = 0, as in the vectors).
 /// </summary>
-public sealed class PayloadTests
+public sealed class PayloadTests(ITestOutputHelper output)
 {
     private const double RelTol = 1e-12;
     private static readonly ArmModel s_arm = ArmModel.OpenManipulatorX();
@@ -114,5 +116,75 @@ public sealed class PayloadTests
         AssertRel(oneStep.Iyy, twoSteps.Iyy);
         AssertRel(oneStep.Ell, twoSteps.Ell);
         Assert.Equal(oneStep.Eps, twoSteps.Eps, 1e-13);
+    }
+
+    public static TheoryData<int> LoadedPoseIndices()
+    {
+        var data = new TheoryData<int>();
+        var poses = TestVectors.Instance.Poses;
+        for (var i = 0; i < poses.Count; i++)
+            if (poses[i].PayloadKg == 0.5) data.Add(i);
+        return data;
+    }
+
+    [Fact]
+    public void Vectors_ContainHalfKilogramPoses()
+    {
+        Assert.NotEmpty(LoadedPoseIndices());
+    }
+
+    [Theory]
+    [MemberData(nameof(LoadedPoseIndices))]
+    public void WithPayload_HalfKilogram_GeneralInertiaMatchesVectors(int index)
+    {
+        var pose = TestVectors.Instance.Poses[index];
+        var loaded = s_arm.WithPayload(pose.PayloadKg);
+        Assert.Equal(0.0, loaded.Actuator.RotorInertia);
+        var expected = ToArray(pose.M);
+        var actual = GeneralInertia(new RecursiveNewtonEuler(loaded), pose.Q);
+
+        var rel = MaxAbsDifference(expected, actual) / MaxAbs(expected);
+        output.WriteLine($"V14 pose {index}: general M vs vectors {rel:E3}");
+        Assert.True(rel <= DynamicsTestHelpers.RelTol, $"relative difference {rel:E3}");
+    }
+
+    [Theory]
+    [MemberData(nameof(LoadedPoseIndices))]
+    public void WithPayload_HalfKilogram_GeneralGravityMatchesVectors(int index)
+    {
+        var pose = TestVectors.Instance.Poses[index];
+        var h = new double[4];
+        new RecursiveNewtonEuler(s_arm.WithPayload(pose.PayloadKg)).BiasTorque(pose.Q, new double[4], Planet.Earth, h);
+
+        var rel = MaxAbsDifference(pose.GravityEarth, h) / MaxAbs(pose.GravityEarth);
+        output.WriteLine($"V14 pose {index}: general g vs vectors {rel:E3}");
+        Assert.True(rel <= DynamicsTestHelpers.RelTol, $"relative difference {rel:E3}");
+    }
+
+    [Fact]
+    public void WithPayload_HalfKilogram_GeneralDynamicsMatchClosedForm_InRandomPoses()
+    {
+        var loaded = s_arm.WithPayload(0.5);
+        var rnea = new RecursiveNewtonEuler(loaded);
+        var closed = new ClosedFormArm(loaded);
+        var random = new Random(14);
+        var h = new double[4];
+        var worstM = 0.0;
+        var worstG = 0.0;
+
+        for (var trial = 0; trial < 1000; trial++)
+        {
+            var q = RandomVector(random, 4, Math.PI);
+            var expectedM = closed.InertiaMatrix(q);
+            var relM = MaxAbsDifference(expectedM, GeneralInertia(rnea, q)) / MaxAbs(expectedM);
+            rnea.BiasTorque(q, new double[4], Planet.Earth, h);
+            var expectedG = closed.Gravity(q, Planet.Earth.G);
+            var relG = MaxAbsDifference(expectedG, h) / MaxAbs(expectedG);
+            worstM = Math.Max(worstM, relM);
+            worstG = Math.Max(worstG, relG);
+            Assert.True(relM <= DynamicsTestHelpers.RelTol, $"M: relative difference {relM:E3}");
+            Assert.True(relG <= DynamicsTestHelpers.RelTol, $"g: relative difference {relG:E3}");
+        }
+        output.WriteLine($"V14 0.5 kg, 1000 random poses: max relative difference M {worstM:E3}, g {worstG:E3}");
     }
 }
