@@ -86,9 +86,35 @@ public sealed class ParametersTests
     }
 
     [Fact]
+    public void Body_GeneralConstructor_KeepsVectorAndTensor_AndValidates()
+    {
+        var com = new Vector3d(0.03, -0.01, 0.02);
+        var inertia = new Matrix3d(2e-3, 1e-4, -2e-4, 1e-4, 3e-3, 5e-5, -2e-4, 5e-5, 2.5e-3);
+        var b = new BodyParameters(0.5, com, inertia);
+        Assert.Equal(com, b.CenterOfMass);
+        Assert.Equal(inertia, b.Inertia);
+        Assert.Equal((1e-4, -2e-4, 5e-5), (b.Ixy, b.Ixz, b.Iyz));
+        Assert.Equal(-0.01, b.Cy);
+        Assert.False(b.IsPlanar);
+        Assert.Equal(Math.Sqrt(0.03 * 0.03 + 0.02 * 0.02), b.Ell, 1e-15);
+
+        var asymmetric = new Matrix3d(2e-3, 1e-4, 0, 0, 3e-3, 0, 0, 0, 2.5e-3);
+        Assert.Throws<ArgumentOutOfRangeException>(() => new BodyParameters(0.5, com, asymmetric));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new BodyParameters(0.5, com, Matrix3d.Diagonal(1e-3, -1e-3, 1e-3)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new BodyParameters(0.5, new Vector3d(double.NaN, 0, 0), inertia));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new BodyParameters(0.0, com, inertia));
+
+        // The planar bodies of SPEC §3.2 are planar.
+        Assert.All(s_arm.Bodies, body => Assert.True(body.IsPlanar));
+    }
+
+    [Fact]
     public void Actuator_DefaultsEqualSpecSection3_3()
     {
-        var a = s_arm.Actuator;
+        // One XM430-W350 with the SPEC §3.3 defaults on every joint.
+        Assert.Equal(4, s_arm.Actuators.Count);
+        Assert.All(s_arm.Actuators, actuator => Assert.Equal(new ActuatorParameters(), actuator));
+        var a = s_arm.Actuators[0];
         Assert.Equal(4.1, a.StallTorque);
         Assert.Equal(s_vectors.StallTorque, a.StallTorque);
         Assert.Equal(353.5, a.GearRatio);

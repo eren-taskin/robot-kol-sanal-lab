@@ -69,12 +69,21 @@ public static class Rotations
         return new Matrix3d(c, 0, s, 0, 1, 0, -s, 0, c);
     }
 
+    /// <summary>Rx(a) = [[1,0,0],[0,c,−s],[0,s,c]], roll about the local x axis. SPEC §4.1 (longer chains).</summary>
+    public static Matrix3d Rx(double a)
+    {
+        var c = Math.Cos(a);
+        var s = Math.Sin(a);
+        return new Matrix3d(1, 0, 0, 0, c, -s, 0, s, c);
+    }
+
     /// <summary>Rotation by <paramref name="angle"/> about a joint axis. SPEC §4.1.</summary>
     /// <exception cref="ArgumentOutOfRangeException">The axis is not defined.</exception>
     public static Matrix3d About(JointAxis axis, double angle) => axis switch
     {
         JointAxis.Z => Rz(angle),
         JointAxis.Y => Ry(angle),
-        _ => throw new ArgumentOutOfRangeException(nameof(axis), axis, "Joint axis must be Z or Y (SPEC §4.1)."),
+        JointAxis.X => Rx(angle),
+        _ => throw new ArgumentOutOfRangeException(nameof(axis), axis, "Joint axis must be Z, Y or X (SPEC §4.1)."),
     };
 }

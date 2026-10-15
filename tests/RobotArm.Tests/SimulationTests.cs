@@ -56,12 +56,12 @@ public sealed class SimulationTests(ITestOutputHelper output)
         foreach (var q in s_staticPoses)
         {
             var g = closed.Gravity(q, planet.G);
-            Assert.True(DynamicsTestHelpers.MaxAbs(g) < arm.Actuator.StallTorque,
+            Assert.True(DynamicsTestHelpers.MaxAbs(g) < arm.Actuators[0].StallTorque,
                 Invariant($"pose ({q[0]}, {q[1]}, {q[2]}, {q[3]}) needs {DynamicsTestHelpers.MaxAbs(g):F3} N·m > τmax"));
             for (var i = 0; i < 4; i++)
                 Assert.True(arm.Joints[i].IsWithinLimits(q[i]));
             Assert.True(ForwardKinematics.ClosedForm(q).Position.Z > 0.0);
-            Assert.True(arm.Actuator.ViscousFriction > 0.0 && arm.Actuator.CoulombFriction > 0.0);
+            Assert.True(arm.Actuators[0].ViscousFriction > 0.0 && arm.Actuators[0].CoulombFriction > 0.0);
             Assert.True(h < StabilityEstimate.MaxStableStep(arm.WithPayload(payloadKg), q));
 
             var plant = new ArmPlant(arm, planet);
@@ -171,14 +171,37 @@ public sealed class SimulationTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void FaultChecksNone_NeverStops()
+    public void FaultChecksNone_StopsOnlyForNonFiniteState()
     {
+        // Without optional checks the run is not stopped by limits or the floor ...
         var plant = new ArmPlant(ArmModel.OpenManipulatorX(), Planet.Earth);
-        var sim = new Simulation(plant, new Rk4Solver(8), new double[8], FaultChecks.None);
-        Assert.True(sim.Advance([double.NaN, 0.0, 0.0, 0.0], 1e-3));
+        var sim = new Simulation(plant, new Rk4Solver(8), [0.3, 0.30, 0.25, 0.45, 0.0, 0.0, 0.0, 0.0], FaultChecks.None);
+        Run(sim, s_zeroTorque, 1e-3, 100);
         Assert.Null(sim.Fault);
+        Assert.True(ForwardKinematics.ClosedForm(sim.Q).Position.Z < 0.0);
+
+        // ... but a NaN state is never valid and is always a NonFinite fault (docs/DECISIONS.md D5).
+        Assert.False(sim.Advance([double.NaN, 0.0, 0.0, 0.0], 1e-3));
+        var fault = Assert.IsType<Fault>(sim.Fault);
+        Assert.Equal(FaultReason.NonFinite, fault.Reason);
+        Assert.Equal(-1, fault.Joint);
+    }
+
+    [Fact]
+    public void Fault_NonFinite_IsReportedAsNonFinite_WithJointLimitOnAndNonFiniteOff()
+    {
+        // T06 finding: a NaN angle fails IsWithinLimits, which used to be reported as a JointLimit fault.
+        var plant = new ArmPlant(ArmModel.OpenManipulatorX(), Planet.Earth);
+        var sim = new Simulation(plant, new Rk4Solver(8), new double[8], FaultChecks.JointLimit);
+        Assert.Equal(0, (int)(sim.Checks & FaultChecks.NonFinite));
+
+        Assert.False(sim.Advance([0.0, double.NaN, 0.0, 0.0], 1e-3));
+
+        var fault = Assert.IsType<Fault>(sim.Fault);
+        Assert.Equal(FaultReason.NonFinite, fault.Reason);
+        Assert.Equal(-1, fault.Joint);
+        Assert.True(double.IsNaN(fault.Value));
         Assert.Contains(sim.State.ToArray(), double.IsNaN);
-        Assert.True(sim.Advance([0.0, 0.0, 0.0, 0.0], 1e-3));
     }
 
     [Fact]

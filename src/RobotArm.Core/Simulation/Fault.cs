@@ -20,10 +20,16 @@ public enum FaultReason
 [Flags]
 public enum FaultChecks
 {
-    /// <summary>No checks: the simulation never stops by itself.</summary>
+    /// <summary>
+    /// No optional checks: joint limits and floor are not checked. A non-finite state still stops the
+    /// simulation (docs/DECISIONS.md D5).
+    /// </summary>
     None = 0,
 
-    /// <summary>NaN or infinity in the state.</summary>
+    /// <summary>
+    /// NaN or infinity in the state. Kept for completeness; this check always runs, set or not, because a
+    /// non-finite state is never valid (docs/DECISIONS.md D5).
+    /// </summary>
     NonFinite = 1,
 
     /// <summary>Joint angles outside the limits of SPEC §3.4.</summary>

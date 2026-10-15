@@ -44,10 +44,12 @@ public sealed class ChainTests
     {
         var joints = s_arm.Joints.ToArray();
         var bodies = s_arm.Bodies.ToArray();
-        var model = new ArmModel(joints, bodies, s_arm.ToolPoint, s_arm.Actuator);
+        var actuators = s_arm.Actuators.ToArray();
+        var model = new ArmModel(joints, bodies, s_arm.ToolPoint, actuators);
 
         joints[0] = new JointDefinition(Vector3d.Zero, JointAxis.Y, -1, 1);
         bodies[0] = new BodyParameters(1.0, 0.0, 0.0, 1e-3, 1e-3, 1e-3, 0.0);
+        actuators[0] = new ActuatorParameters { StallTorque = 1.0 };
 
         Assert.Equal(s_arm, model);
         Assert.False(model.Joints is JointDefinition[]);
@@ -57,9 +59,48 @@ public sealed class ChainTests
     public void Constructor_MismatchedJointAndBodyCounts_Throws()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            new ArmModel(s_arm.Joints, s_arm.Bodies.Take(3), s_arm.ToolPoint, s_arm.Actuator));
+            new ArmModel(s_arm.Joints, s_arm.Bodies.Take(3), s_arm.ToolPoint, s_arm.Actuators[0]));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            new ArmModel([], [], s_arm.ToolPoint, s_arm.Actuator));
+            new ArmModel([], [], s_arm.ToolPoint, s_arm.Actuators[0]));
+    }
+
+    [Fact]
+    public void Constructor_NeedsOneActuatorPerJoint()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new ArmModel(s_arm.Joints, s_arm.Bodies, s_arm.ToolPoint, s_arm.Actuators.Take(3)));
+        Assert.Throws<ArgumentNullException>(() =>
+            new ArmModel(s_arm.Joints, s_arm.Bodies, s_arm.ToolPoint, [.. s_arm.Actuators.Take(3), null!]));
+        Assert.Throws<ArgumentNullException>(() =>
+            new ArmModel(s_arm.Joints, s_arm.Bodies, s_arm.ToolPoint, (ActuatorParameters)null!));
+    }
+
+    [Fact]
+    public void Actuators_ArePerJoint_AndPartOfEquality()
+    {
+        var actuators = s_arm.Actuators.ToArray();
+        actuators[2] = actuators[2] with { StallTorque = 2.0 };
+        var model = new ArmModel(s_arm.Joints, s_arm.Bodies, s_arm.ToolPoint, actuators);
+
+        Assert.Equal(2.0, model.Actuators[2].StallTorque);
+        Assert.Equal(4.1, model.Actuators[1].StallTorque);
+        Assert.NotEqual(s_arm, model);
+        Assert.False(model.Actuators is ActuatorParameters[]);
+    }
+
+    [Fact]
+    public void JointAxisX_IsTheRollAxis_RxMatchesTheRightHandRule()
+    {
+        // Rx(a) = [[1,0,0],[0,c,−s],[0,s,c]]: a positive angle turns local y towards local z.
+        var joint = new JointDefinition(Vector3d.Zero, JointAxis.X, -1, 1);
+        Assert.Equal(Vector3d.UnitX, joint.AxisVector);
+        var r = RobotArm.Core.Kinematics.Rotations.About(JointAxis.X, 0.3);
+        Assert.Equal(RobotArm.Core.Kinematics.Rotations.Rx(0.3), r);
+        Assert.Equal(new Vector3d(1, 0, 0), r * Vector3d.UnitX);
+        var y = r * Vector3d.UnitY;
+        Assert.Equal(0.0, y.X);
+        Assert.Equal(Math.Cos(0.3), y.Y, 1e-15);
+        Assert.Equal(Math.Sin(0.3), y.Z, 1e-15);
     }
 
     [Fact]

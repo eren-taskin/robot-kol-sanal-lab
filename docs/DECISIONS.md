@@ -85,6 +85,8 @@ Predicted limit 2.78/λmax with ωs = 0.01, unloaded: 0.164 ms at q = 0, 0.165�
 - The estimate is a local, linear one at rest. Controller gains add damping and stiffness, and a large Kd can lower the limit again; T07 should pass its derivative gains as `extraDamping`.
 - Steps up to 5 ms remain allowed, so the warning in the UI is needed.
 
+**Limitations.** The estimate is evaluated at one pose q. M(q) changes along a trajectory (m11 shrinks when the arm folds towards the base axis), so a step that is stable at the start pose can be too large later in the run. It ignores stiffness: a controller's Kp and the gravity gradient ∂g/∂q are left out, so it models only the damped velocity modes (with no damping at all it returns +∞, although undamped oscillating modes still limit h). It also treats extra damping as continuous damping inside the RK4 stages, while a sampled controller (SPEC §6.3) holds its torque for Ts, which is a discrete-time loop with its own limit. T07 will extend the estimate to the linearised closed loop (the 2n×2n matrix with M⁻¹K and M⁻¹D, and the sampled controller). Friction is now per joint (D5): d_i = fv,i + fc,i/ωs,i.
+
 ---
 
 ## D4 – A non-finite angle gives NaN derivatives, not an exception
@@ -95,4 +97,36 @@ Predicted limit 2.78/λmax with ωs = 0.01, unloaded: 0.164 ms at q = 0, 0.165�
 
 **Why.** The fault path of SPEC §6.4 is the one place that decides how a run ends. The solver and plant stay simple and do not throw for a bad number. A matrix that is not positive definite for finite q is still an exception, because that is a model error, not a run-time fault.
 
-**Consequences.** With fault checks off (`FaultChecks.None`) a NaN state keeps going as NaN without an exception. Tests cover both cases.
+**Consequences.** ~~With fault checks off (`FaultChecks.None`) a NaN state keeps going as NaN without an exception.~~ Changed in T06b (D5): a non-finite state is always reported as `FaultReason.NonFinite`, whatever `FaultChecks` says. The plant now checks q̇ as well as q, and on a non-finite state it sets `AppliedTorque` to NaN and clears the saturation flags.
+
+---
+
+## D5 – T06 review: what was fixed (T06b) and what was deferred
+
+**Context.** The independent review of T02–T05 (`docs/reviews/T06-review.md`, Antigravity/Gemini) confirmed the parameters, kinematics, dynamics, solver and the PROJECT.md rules, and found bugs in non-finite handling, limits on 6-DOF generality and blind spots in the tests. The conductor chose which to fix in T06b.
+
+**Fixed.**
+
+- *StabilityEstimate, NaN pose.* `MaxDampingRate` and `MaxStableStep` throw `ArgumentException` (parameter `q`, naming the joint) when an angle is not finite. Before, a NaN pose returned +∞ ("any step is stable") or threw from inside Cholesky.
+- *Fault detection.* A non-finite state is always `FaultReason.NonFinite`, whatever `FaultChecks` says, and it is checked before the joint limits. Before, with `JointLimit` on and `NonFinite` off, a NaN angle failed `IsWithinLimits` and was reported as a `JointLimit` fault on joint 1. NaN can never be a valid state, so the check is not optional; `FaultChecks.NonFinite` is kept so existing code compiles, and `FaultChecks.None` now means "no limit or floor checks". This changes the consequence of D4.
+- *ArmPlant, non-finite state.* `Derivatives` checks the whole state, q and q̇. On a non-finite value it fills ẋ with NaN, sets `AppliedTorque` to NaN and clears `Saturated`, so no value from an earlier call remains, and RNEA and Cholesky are not run.
+- *6-DOF readiness.*
+  - `JointAxis.X` (roll, `Rotations.Rx`) is supported by the frame chain and RNEA.
+  - `BodyParameters` has a general constructor (mass, centre-of-mass vector, full symmetric positive definite inertia tensor) next to the planar one of SPEC §3.2. The dynamics always used the full vector and tensor. `IsPlanar` says whether Cy = Ixy = Iyz = 0.
+  - Actuator parameters are per joint: `ArmModel.Actuators` (one `ActuatorParameters` per joint) replaces `ArmModel.Actuator`. `OpenManipulatorX()` gives all four joints the XM430-W350 defaults of SPEC §3.3. A constructor overload that takes one `ActuatorParameters` for every joint is kept. `RecursiveNewtonEuler` (N²·Jm per joint), `ArmPlant` (τmax, fv, fc, ωs per joint) and `StabilityEstimate` (dᵢ per joint) use them.
+  - `WithPayload` stays planar (SPEC §5.5). It throws `NotSupportedException` when the last body is not planar or the tool point has y ≠ 0, instead of building a wrong combined body.
+  - A test-only 6-DOF chain (`tests/RobotArm.Tests/SixJointChain.cs`, axes Z, Y, Y, X, Y, X, off-axis centres of mass, rotated inertia tensors with nonzero products, different actuators per joint) is run through the frame chain, RNEA, the inertia matrix, the plant, RK4 and the stability estimate. Results: kinetic energy ½q̇ᵀMq̇ against Σ(½mv² + ½ωᵀIω) + Σ½N²Jm q̇² from the frames by central differences, 100 random states: largest relative mismatch 5.1e-10; τ = Mq̈ + h to 1e-15 relative; g(q) = ∂V/∂q to 8e-10 and Cq̇ against the Lagrange form to 2e-9 relative; free motion without friction, 0.4 s at h = 0.5 ms, E0 ≈ 15 J: drift 5.6e-11 J; M symmetric (raw columns to 1.1e-16) and positive definite in 1000 poses.
+- *Test blind spots.*
+  - V9 and V10 also assert that the state moved (max |q − q0| > 0.1 rad; it is 3.4 rad), so a frozen simulation cannot pass.
+  - Friction: with τ = 0 and friction on, energy decreases in every step and E(t) − E(0) equals ∫ −q̇ᵀτf dt (Simpson's rule) to 8e-8 of the dissipated energy. V13 could not see friction at all.
+  - V6 checks the symmetry of the raw Walker–Orin columns (internal `RecursiveNewtonEuler.InertiaColumns`, visible to the tests through `InternalsVisibleTo`) to 1e-12, before `InertiaMatrix` mirrors them; measured 3.5e-18.
+
+**Deferred.**
+
+- The stability estimate's limits (one pose, no stiffness, continuous instead of sampled damping): see the Limitations paragraph of D3; T07 extends it to the linearised closed loop.
+- `ReflectedRotorInertia` = N²·Jm can overflow to +∞ for absurd finite inputs; not validated yet.
+- `PlanarJacobian.TryInvert` and `IsNearSingular` do not validate `threshold` (0 or negative would allow a division by zero).
+- `InverseKinematicsResult`: `default` reports success, and |cos φ| = 1 + 1e-16 from rounding on the stretched-elbow boundary is reported as unreachable. To be handled with the Cartesian trajectories of T08.
+- Exception messages in `BodyParameters`, `JointDefinition` and `Planet` format numbers without `CultureInfo.InvariantCulture` (style).
+- V8 and the C·q̇ test do not test C(q, q̇)·w for w ≠ q̇; needed only if the optional Slotine–Li controller is built.
+- `WithPayload` for non-planar bodies (general 3D parallel-axis combination) and fixed joint-frame rotations beyond the three elementary axes, for T14 if a real 6-DOF arm is added.

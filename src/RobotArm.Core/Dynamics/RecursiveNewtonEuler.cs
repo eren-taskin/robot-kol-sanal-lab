@@ -14,7 +14,7 @@ namespace RobotArm.Core.Dynamics;
 /// </para>
 /// <para>
 /// Gravity enters as a base acceleration a0 = −gravity, so the output contains g(q) (SPEC §5.1).
-/// The reflected rotor inertia N²·Jm (SPEC §3.3, §5.2) acts on each joint's own acceleration:
+/// The reflected rotor inertia N²·Jm of each joint's own actuator (SPEC §3.3, §5.2) acts on that joint's acceleration:
 /// it is on the diagonal of <see cref="InertiaMatrix"/> and adds N²·Jm·q̈i to <see cref="Inverse"/>,
 /// so that Inverse(q, q̇, q̈) = M(q) q̈ + h(q, q̇) holds with the same M.
 /// </para>
@@ -33,7 +33,7 @@ public sealed class RecursiveNewtonEuler
     private readonly double[] _mass;
     private readonly Vector3d[] _com;
     private readonly Matrix3d[] _inertia;
-    private readonly double _reflectedRotorInertia;
+    private readonly double[] _reflectedRotorInertia;
 
     // Work buffers. _rotation[i] = R(axis i, qi): maps vectors from Fi to the parent frame.
     private readonly Matrix3d[] _rotation;
@@ -57,6 +57,7 @@ public sealed class RecursiveNewtonEuler
         _mass = new double[_n];
         _com = new Vector3d[_n];
         _inertia = new Matrix3d[_n];
+        _reflectedRotorInertia = new double[_n];
         for (var i = 0; i < _n; i++)
         {
             var joint = model.Joints[i];
@@ -67,8 +68,8 @@ public sealed class RecursiveNewtonEuler
             _mass[i] = body.Mass;
             _com[i] = body.CenterOfMass;
             _inertia[i] = body.Inertia;
+            _reflectedRotorInertia[i] = model.Actuators[i].ReflectedRotorInertia;
         }
-        _reflectedRotorInertia = model.Actuator.ReflectedRotorInertia;
 
         _rotation = new Matrix3d[_n];
         _force = new Vector3d[_n];
@@ -106,7 +107,7 @@ public sealed class RecursiveNewtonEuler
         SetRotations(q);
         RigidBodyPass(qd, qdd, -gravity, tau);
         for (var i = 0; i < _n; i++)
-            tau[i] += _reflectedRotorInertia * qdd[i];
+            tau[i] += _reflectedRotorInertia[i] * qdd[i];
     }
 
     /// <summary>
@@ -141,7 +142,7 @@ public sealed class RecursiveNewtonEuler
 
     /// <summary>
     /// Inertia matrix M(q), row-major n×n: column k is RNEA(q, 0, e_k) with gravity zero (Walker and Orin),
-    /// plus N²·Jm on each diagonal entry. SPEC §5.2. Does not allocate.
+    /// plus joint k's N²·Jm on diagonal entry k. SPEC §5.2. Does not allocate.
     /// </summary>
     /// <remarks>
     /// The entries on and below the diagonal are taken from the columns and mirrored above it, so the
@@ -168,7 +169,29 @@ public sealed class RecursiveNewtonEuler
                 m[i * _n + k] = _column[i];
                 m[k * _n + i] = _column[i];
             }
-            m[k * _n + k] += _reflectedRotorInertia;
+            m[k * _n + k] += _reflectedRotorInertia[k];
+        }
+    }
+
+    /// <summary>
+    /// The raw Walker–Orin columns, for the tests: entry (i, k) of <paramref name="m"/> (row-major) is entry i of
+    /// RNEA(q, 0, e_k) with gravity zero, for every i and k, without mirroring and without N²·Jm. In exact
+    /// arithmetic this is the rigid-body M(q); the tests check its symmetry (V6). SPEC §5.2.
+    /// </summary>
+    internal void InertiaColumns(ReadOnlySpan<double> q, Span<double> m)
+    {
+        RequireLength(q, nameof(q));
+        if (m.Length != _n * _n)
+            throw new ArgumentException($"Expected room for {_n}×{_n} = {_n * _n} entries, got {m.Length} (SPEC §5.2).", nameof(m));
+
+        SetRotations(q);
+        for (var k = 0; k < _n; k++)
+        {
+            _unit[k] = 1.0;
+            RigidBodyPass(_zeros, _unit, Vector3d.Zero, _column);
+            _unit[k] = 0.0;
+            for (var i = 0; i < _n; i++)
+                m[i * _n + k] = _column[i];
         }
     }
 

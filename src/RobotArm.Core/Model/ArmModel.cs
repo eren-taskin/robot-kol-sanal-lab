@@ -4,7 +4,7 @@ namespace RobotArm.Core.Model;
 
 /// <summary>
 /// A serial arm as data: joints, bodies, tool point and actuators. SPEC §4.1 ("the chain is data, not code"),
-/// §3.2, §3.3. Joint i moves body i; both lists are zero-based. Immutable.
+/// §3.2, §3.3. Joint i moves body i and is driven by actuator i; the lists are zero-based. Immutable.
 /// </summary>
 /// <remarks>
 /// The model holds the joint limits but never rejects a configuration for being outside them (SPEC §3.4).
@@ -13,6 +13,7 @@ public sealed class ArmModel : IEquatable<ArmModel>
 {
     private readonly JointDefinition[] _joints;
     private readonly BodyParameters[] _bodies;
+    private readonly ActuatorParameters[] _actuators;
 
     /// <summary>Joints in order from the base, zero-based. SPEC §4.1.</summary>
     public IReadOnlyList<JointDefinition> Joints { get; }
@@ -23,13 +24,61 @@ public sealed class ArmModel : IEquatable<ArmModel>
     /// <summary>Tool point in the frame of the last joint, m. SPEC §4.1.</summary>
     public Vector3d ToolPoint { get; }
 
-    /// <summary>Actuator and friction parameters, the same for every joint. SPEC §3.3.</summary>
-    public ActuatorParameters Actuator { get; }
+    /// <summary>
+    /// Actuator and friction parameters, one per joint; actuator i drives joint i. SPEC §3.3. For the
+    /// OpenMANIPULATOR-X all four are the XM430-W350 values (docs/DECISIONS.md D5).
+    /// </summary>
+    public IReadOnlyList<ActuatorParameters> Actuators { get; }
 
     /// <summary>Number of joints (4 for the OpenMANIPULATOR-X).</summary>
     public int DegreesOfFreedom => _joints.Length;
 
-    /// <summary>Creates a model. The sequences are copied. SPEC §4.1.</summary>
+    /// <summary>Creates a model with one actuator per joint. The sequences are copied. SPEC §4.1, §3.3.</summary>
+    /// <exception cref="ArgumentNullException">A sequence or an element is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// No joints, a different number of joints and bodies or actuators, or a tool point that is not finite.
+    /// </exception>
+    public ArmModel(
+        IEnumerable<JointDefinition> joints,
+        IEnumerable<BodyParameters> bodies,
+        Vector3d toolPoint,
+        IEnumerable<ActuatorParameters> actuators)
+    {
+        ArgumentNullException.ThrowIfNull(joints);
+        ArgumentNullException.ThrowIfNull(bodies);
+        ArgumentNullException.ThrowIfNull(actuators);
+
+        _joints = joints.ToArray();
+        _bodies = bodies.ToArray();
+        _actuators = actuators.ToArray();
+
+        if (_joints.Length == 0)
+            throw new ArgumentOutOfRangeException(nameof(joints), "An arm needs at least one joint (SPEC §4.1).");
+        if (_bodies.Length != _joints.Length)
+            throw new ArgumentOutOfRangeException(nameof(bodies), _bodies.Length,
+                $"An arm needs one body per joint: {_joints.Length} joints but {_bodies.Length} bodies (SPEC §4.1).");
+        if (Array.IndexOf(_joints, null) >= 0)
+            throw new ArgumentNullException(nameof(joints), "A joint is null.");
+        if (_actuators.Length != _joints.Length)
+            throw new ArgumentOutOfRangeException(nameof(actuators), _actuators.Length,
+                $"An arm needs one actuator per joint: {_joints.Length} joints but {_actuators.Length} actuators (SPEC §3.3).");
+        if (Array.IndexOf(_bodies, null) >= 0)
+            throw new ArgumentNullException(nameof(bodies), "A body is null.");
+        if (Array.IndexOf(_actuators, null) >= 0)
+            throw new ArgumentNullException(nameof(actuators), "An actuator is null.");
+        if (!toolPoint.IsFinite)
+            throw new ArgumentOutOfRangeException(nameof(toolPoint), toolPoint, "Tool point must be finite (SPEC §4.1).");
+
+        Joints = Array.AsReadOnly(_joints);
+        Bodies = Array.AsReadOnly(_bodies);
+        ToolPoint = toolPoint;
+        Actuators = Array.AsReadOnly(_actuators);
+    }
+
+    /// <summary>
+    /// Creates a model whose joints all have the same <paramref name="actuator"/>. The sequences are copied.
+    /// SPEC §4.1, §3.3.
+    /// </summary>
     /// <exception cref="ArgumentNullException">A sequence, an element or the actuator is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException">
     /// No joints, a different number of joints and bodies, or a tool point that is not finite.
@@ -39,30 +88,13 @@ public sealed class ArmModel : IEquatable<ArmModel>
         IEnumerable<BodyParameters> bodies,
         Vector3d toolPoint,
         ActuatorParameters actuator)
+        : this(Copy(joints), bodies, toolPoint, actuator)
     {
-        ArgumentNullException.ThrowIfNull(joints);
-        ArgumentNullException.ThrowIfNull(bodies);
-        ArgumentNullException.ThrowIfNull(actuator);
+    }
 
-        _joints = joints.ToArray();
-        _bodies = bodies.ToArray();
-
-        if (_joints.Length == 0)
-            throw new ArgumentOutOfRangeException(nameof(joints), "An arm needs at least one joint (SPEC §4.1).");
-        if (_bodies.Length != _joints.Length)
-            throw new ArgumentOutOfRangeException(nameof(bodies), _bodies.Length,
-                $"An arm needs one body per joint: {_joints.Length} joints but {_bodies.Length} bodies (SPEC §4.1).");
-        if (Array.IndexOf(_joints, null) >= 0)
-            throw new ArgumentNullException(nameof(joints), "A joint is null.");
-        if (Array.IndexOf(_bodies, null) >= 0)
-            throw new ArgumentNullException(nameof(bodies), "A body is null.");
-        if (!toolPoint.IsFinite)
-            throw new ArgumentOutOfRangeException(nameof(toolPoint), toolPoint, "Tool point must be finite (SPEC §4.1).");
-
-        Joints = Array.AsReadOnly(_joints);
-        Bodies = Array.AsReadOnly(_bodies);
-        ToolPoint = toolPoint;
-        Actuator = actuator;
+    private ArmModel(JointDefinition[] joints, IEnumerable<BodyParameters> bodies, Vector3d toolPoint, ActuatorParameters actuator)
+        : this(joints, bodies, toolPoint, Enumerable.Repeat(actuator ?? throw new ArgumentNullException(nameof(actuator)), joints.Length))
+    {
     }
 
     /// <summary>
@@ -88,6 +120,7 @@ public sealed class ArmModel : IEquatable<ArmModel>
             new(0.1433, 0.0451, Deg(-11.4), 80.9e-6, 76.0e-6, 93.1e-6, -1.0e-6),
         ];
 
+        // SPEC §3.3: every joint has an XM430-W350 with the default parameters.
         return new ArmModel(joints, bodies, new Vector3d(G.L4, 0.0, 0.0), new ActuatorParameters());
     }
 
@@ -95,19 +128,30 @@ public sealed class ArmModel : IEquatable<ArmModel>
     /// A new model whose last body is combined with a point mass rigidly attached at the tool point.
     /// SPEC §5.5. A massless payload returns this model, which is equal to itself.
     /// </summary>
+    /// <remarks>
+    /// Only planar data is supported (SPEC §3.2): the last body must have its centre of mass in its x–z plane
+    /// and no Ixy or Iyz terms (<see cref="BodyParameters.IsPlanar"/>), and the tool point must have y = 0.
+    /// That is the case for the OpenMANIPULATOR-X. Anything else throws <see cref="NotSupportedException"/>
+    /// instead of returning a wrong combined body (docs/DECISIONS.md D5).
+    /// </remarks>
     /// <param name="massKg">Payload mass mp in kg, finite and at least 0.</param>
     /// <exception cref="ArgumentOutOfRangeException">The mass is negative or not finite.</exception>
-    /// <exception cref="InvalidOperationException">The tool point is not in the last body's x–z plane.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The mass is positive and the last body or the tool point is not planar.
+    /// </exception>
     public ArmModel WithPayload(double massKg)
     {
         if (!double.IsFinite(massKg) || massKg < 0.0)
             throw new ArgumentOutOfRangeException(nameof(massKg), massKg, "Payload mass must be a finite number of at least 0 kg (SPEC §5.5).");
         if (massKg == 0.0)
             return this;
-        if (ToolPoint.Y != 0.0)
-            throw new InvalidOperationException("A payload needs the tool point in the last body's x–z plane, y = 0 (SPEC §3.2, §5.5).");
 
         var last = _bodies[^1];
+        if (!last.IsPlanar || ToolPoint.Y != 0.0)
+            throw new NotSupportedException(
+                "WithPayload supports only planar data: the last body's centre of mass and the tool point in its x–z plane " +
+                "(y = 0) and no Ixy or Iyz inertia terms (SPEC §3.2, §5.5; docs/DECISIONS.md D5).");
+
         var c4 = last.CenterOfMass;
         var t = ToolPoint;
         var m = last.Mass + massKg;
@@ -118,17 +162,17 @@ public sealed class ArmModel : IEquatable<ArmModel>
 
         var bodies = (BodyParameters[])_bodies.Clone();
         bodies[^1] = BodyParameters.FromCenterOfMassAndInertia(m, c, inertia);
-        return new ArmModel(_joints, bodies, ToolPoint, Actuator);
+        return new ArmModel(_joints, bodies, ToolPoint, _actuators);
     }
 
-    /// <summary>Value equality: same joints, bodies, tool point and actuator parameters.</summary>
+    /// <summary>Value equality: same joints, bodies, tool point and actuator parameters of every joint.</summary>
     public bool Equals(ArmModel? other) =>
         other is not null &&
         (ReferenceEquals(this, other) ||
          (_joints.AsSpan().SequenceEqual(other._joints) &&
           _bodies.AsSpan().SequenceEqual(other._bodies) &&
           ToolPoint.Equals(other.ToolPoint) &&
-          Actuator.Equals(other.Actuator)));
+          _actuators.AsSpan().SequenceEqual(other._actuators)));
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => Equals(obj as ArmModel);
@@ -140,8 +184,14 @@ public sealed class ArmModel : IEquatable<ArmModel>
         foreach (var j in _joints) hash.Add(j);
         foreach (var b in _bodies) hash.Add(b);
         hash.Add(ToolPoint);
-        hash.Add(Actuator);
+        foreach (var a in _actuators) hash.Add(a);
         return hash.ToHashCode();
+    }
+
+    private static JointDefinition[] Copy(IEnumerable<JointDefinition> joints)
+    {
+        ArgumentNullException.ThrowIfNull(joints);
+        return joints.ToArray();
     }
 
     private static double Deg(double degrees) => degrees * Math.PI / 180.0;

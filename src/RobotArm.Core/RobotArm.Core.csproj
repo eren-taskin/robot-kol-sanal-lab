@@ -8,4 +8,9 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Tests read internal diagnostics such as RecursiveNewtonEuler.InertiaColumns (V6). No reference is added. -->
+    <InternalsVisibleTo Include="RobotArm.Tests" />
+  </ItemGroup>
+
 </Project>

@@ -10,8 +10,8 @@ namespace RobotArm.Core.Simulation;
 /// <remarks>
 /// <para>
 /// The parameters are the true ones (SPEC §5.6): <see cref="BaseModel"/> without payload, the
-/// <see cref="Planet"/>, and the friction parameters fv, fc, ωs of <see cref="ArmModel.Actuator"/>
-/// (SPEC §3.3). Friction is switched off by giving a model with fv = fc = 0.
+/// <see cref="Planet"/>, and τmax and the friction parameters fv, fc, ωs of each joint's actuator in
+/// <see cref="ArmModel.Actuators"/> (SPEC §3.3). Friction is switched off by giving a model with fv = fc = 0.
 /// </para>
 /// <para>
 /// <see cref="Derivatives"/> does not allocate (PROJECT.md §3). <see cref="SetPayload"/> builds a new
@@ -22,10 +22,10 @@ namespace RobotArm.Core.Simulation;
 public sealed class ArmPlant : IPlant
 {
     private readonly int _n;
-    private readonly double _stallTorque;
-    private readonly double _viscousFriction;
-    private readonly double _coulombFriction;
-    private readonly double _smoothingSpeed;
+    private readonly double[] _stallTorque;
+    private readonly double[] _viscousFriction;
+    private readonly double[] _coulombFriction;
+    private readonly double[] _smoothingSpeed;
     private readonly Vector3d _gravity;
     private RecursiveNewtonEuler _dynamics;
 
@@ -44,11 +44,18 @@ public sealed class ArmPlant : IPlant
         BaseModel = model;
         Planet = planet;
         _n = model.DegreesOfFreedom;
-        var actuator = model.Actuator;
-        _stallTorque = actuator.StallTorque;
-        _viscousFriction = actuator.ViscousFriction;
-        _coulombFriction = actuator.CoulombFriction;
-        _smoothingSpeed = actuator.SmoothingSpeed;
+        _stallTorque = new double[_n];
+        _viscousFriction = new double[_n];
+        _coulombFriction = new double[_n];
+        _smoothingSpeed = new double[_n];
+        for (var i = 0; i < _n; i++)
+        {
+            var actuator = model.Actuators[i];
+            _stallTorque[i] = actuator.StallTorque;
+            _viscousFriction[i] = actuator.ViscousFriction;
+            _coulombFriction[i] = actuator.CoulombFriction;
+            _smoothingSpeed[i] = actuator.SmoothingSpeed;
+        }
         _gravity = planet.GravityVector;
         _dynamics = new RecursiveNewtonEuler(model);
 
@@ -81,13 +88,14 @@ public sealed class ArmPlant : IPlant
 
     /// <summary>
     /// Torques τ = clamp(u, −τmax, +τmax) applied in the last <see cref="Derivatives"/> call, N·m. SPEC §5.4.
+    /// NaN for every joint when that call had a non-finite state.
     /// </summary>
     public ReadOnlySpan<double> AppliedTorque => _appliedTorque;
 
     /// <summary>
     /// For each joint, whether |u| exceeded τmax in the last <see cref="Derivatives"/> call. SPEC §5.4.
     /// They depend on u only, and a solver holds u over a step (SPEC §6.2), so after a step they hold for
-    /// every stage of that step.
+    /// every stage of that step. All false when the last call had a non-finite state.
     /// </summary>
     public ReadOnlySpan<bool> Saturated => _saturated;
 
@@ -110,8 +118,10 @@ public sealed class ArmPlant : IPlant
     /// </summary>
     /// <remarks>
     /// A NaN or infinite input gives NaN derivatives instead of an exception, so that the state becomes
-    /// non-finite and the simulation stops with the fault of SPEC §6.4. A NaN or infinite angle q makes M(q)
-    /// undefined; then every derivative is NaN and the Cholesky solve is skipped.
+    /// non-finite and the simulation stops with the fault of SPEC §6.4. A NaN or infinite value anywhere in the
+    /// state (q or q̇) makes the dynamics undefined: then every derivative is NaN, RNEA and the Cholesky solve
+    /// are skipped, <see cref="AppliedTorque"/> is set to NaN and <see cref="Saturated"/> is cleared, so nothing
+    /// from an earlier call remains (docs/DECISIONS.md D4, D5).
     /// </remarks>
     /// <exception cref="ArgumentException">A span has the wrong length, or M is not positive definite.</exception>
     public void Derivatives(double t, ReadOnlySpan<double> x, ReadOnlySpan<double> u, Span<double> dx)
@@ -126,11 +136,13 @@ public sealed class ArmPlant : IPlant
         var q = x[.._n];
         var qd = x[_n..];
 
-        foreach (var qi in q)
+        foreach (var xi in x)
         {
-            if (!double.IsFinite(qi))
+            if (!double.IsFinite(xi))
             {
                 dx.Fill(double.NaN);
+                Array.Fill(_appliedTorque, double.NaN);
+                Array.Clear(_saturated);
                 return;
             }
         }
@@ -142,11 +154,11 @@ public sealed class ArmPlant : IPlant
         for (var i = 0; i < _n; i++)
         {
             var ui = u[i];
-            var tau = Math.Clamp(ui, -_stallTorque, _stallTorque);
-            _saturated[i] = Math.Abs(ui) > _stallTorque;
+            var tau = Math.Clamp(ui, -_stallTorque[i], _stallTorque[i]);
+            _saturated[i] = Math.Abs(ui) > _stallTorque[i];
             _appliedTorque[i] = tau;
 
-            var friction = _viscousFriction * qd[i] + _coulombFriction * Math.Tanh(qd[i] / _smoothingSpeed);
+            var friction = _viscousFriction[i] * qd[i] + _coulombFriction[i] * Math.Tanh(qd[i] / _smoothingSpeed[i]);
             _rhs[i] = tau - friction - _rhs[i];
         }
 

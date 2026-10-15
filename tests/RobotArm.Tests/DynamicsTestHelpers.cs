@@ -80,5 +80,5 @@ internal static class DynamicsTestHelpers
 
     /// <summary>The OpenMANIPULATOR-X with rotor inertia Jm, everything else as SPEC §3.</summary>
     public static ArmModel WithRotorInertia(ArmModel arm, double jm) =>
-        new(arm.Joints, arm.Bodies, arm.ToolPoint, arm.Actuator with { RotorInertia = jm });
+        new(arm.Joints, arm.Bodies, arm.ToolPoint, arm.Actuators[0] with { RotorInertia = jm });
 }

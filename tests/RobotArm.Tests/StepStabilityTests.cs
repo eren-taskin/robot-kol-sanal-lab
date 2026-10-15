@@ -19,7 +19,7 @@ public sealed class StepStabilityTests(ITestOutputHelper output)
     private static readonly double[] s_heldPose = [0.0, -0.4, 0.2, 1.0];
 
     private static ArmModel WithSmoothingSpeed(ArmModel arm, double omegaS) =>
-        new(arm.Joints, arm.Bodies, arm.ToolPoint, arm.Actuator with { SmoothingSpeed = omegaS });
+        new(arm.Joints, arm.Bodies, arm.ToolPoint, arm.Actuators[0] with { SmoothingSpeed = omegaS });
 
     private static double[] RandomPoseInsideLimits(Random random, ArmModel arm)
     {
@@ -38,7 +38,7 @@ public sealed class StepStabilityTests(ITestOutputHelper output)
         // Independent route: λmax(M⁻¹D) by power iteration with the closed-form M and Gaussian elimination.
         var arm = ArmModel.OpenManipulatorX().WithPayload(0.2);
         var closed = new ClosedFormArm(arm);
-        var a = arm.Actuator;
+        var a = arm.Actuators[0];
         var friction = a.ViscousFriction + a.CoulombFriction / a.SmoothingSpeed;
         var random = new Random(5);
         var worst = 0.0;
@@ -90,7 +90,7 @@ public sealed class StepStabilityTests(ITestOutputHelper output)
     public void NewDefaults_MaxStableStep_Above1ms_In1000RandomPosesInsideLimits(int payloadGrams)
     {
         var arm = ArmModel.OpenManipulatorX().WithPayload(payloadGrams / 1000.0);
-        Assert.Equal(0.1, arm.Actuator.SmoothingSpeed);
+        Assert.Equal(0.1, arm.Actuators[0].SmoothingSpeed);
         var random = new Random(445);
         var min = double.PositiveInfinity;
         double[] argMin = [];
@@ -139,6 +139,41 @@ public sealed class StepStabilityTests(ITestOutputHelper output)
         Assert.True(double.IsFinite(StabilityEstimate.MaxStableStep(frictionless, s_heldPose, [0.0, 0.5, 0.0, 0.0])));
         Assert.Throws<ArgumentOutOfRangeException>(() => StabilityEstimate.MaxStableStep(arm, s_heldPose, [0.0, -1.0, 0.0, 0.0]));
         Assert.Throws<ArgumentException>(() => StabilityEstimate.MaxStableStep(arm, s_heldPose, [0.0, 1.0]));
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public void MaxStableStep_NonFiniteAngle_ThrowsArgumentException(double value)
+    {
+        // T06 finding: a NaN pose used to give +∞ (all joints damped) or an exception from Cholesky (some undamped).
+        double[] q = [0.0, -0.4, value, 1.0];
+        var damped = Assert.Throws<ArgumentException>(() => StabilityEstimate.MaxStableStep(ArmModel.OpenManipulatorX(), q));
+        Assert.Equal("q", damped.ParamName);
+        Assert.Contains("q[2]", damped.Message);
+        Assert.Contains("not finite", damped.Message);
+
+        var partly = Assert.Throws<ArgumentException>(() => StabilityEstimate.MaxStableStep(FrictionlessArm(), q, [0.0, 0.5, 0.0, 0.0]));
+        Assert.Equal("q", partly.ParamName);
+        Assert.Throws<ArgumentException>(() => StabilityEstimate.MaxDampingRate(ArmModel.OpenManipulatorX(), q, []));
+    }
+
+    [Fact]
+    public void MaxStableStep_UsesEachJointsOwnActuator()
+    {
+        // Friction damping di = fv,i + fc,i/ωs,i per joint must equal the default friction plus the same
+        // difference given as extra damping.
+        var arm = ArmModel.OpenManipulatorX();
+        var actuators = arm.Actuators.ToArray();
+        actuators[1] = actuators[1] with { ViscousFriction = 0.5 };
+        actuators[3] = actuators[3] with { CoulombFriction = 0.05 };
+        var perJoint = new ArmModel(arm.Joints, arm.Bodies, arm.ToolPoint, actuators);
+        double[] extra = [0.0, 0.5 - 0.01, 0.0, (0.05 - 0.02) / 0.1];
+
+        var expected = StabilityEstimate.MaxStableStep(arm, s_heldPose, extra);
+        var actual = StabilityEstimate.MaxStableStep(perJoint, s_heldPose);
+        Assert.Equal(expected, actual, expected * 1e-12);
     }
 
     [Fact]

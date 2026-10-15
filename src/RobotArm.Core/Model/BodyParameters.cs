@@ -5,6 +5,11 @@ namespace RobotArm.Core.Model;
 /// SPEC §3.2 (table and meaning of ℓ, ε) and §4.1 (centre of mass and inertia in Fi).
 /// Immutable; validated on construction.
 /// </summary>
+/// <remarks>
+/// The OpenMANIPULATOR-X bodies are planar: centre of mass in the body's x–z plane and Ixy = Iyz = 0
+/// (SPEC §3.2). A general body for other chains, such as a 6-DOF arm, is made with
+/// <see cref="BodyParameters(double, Vector3d, Matrix3d)"/>; the dynamics use the full vector and tensor either way.
+/// </remarks>
 public sealed record BodyParameters
 {
     /// <summary>Mass m in kg. SPEC §3.2.</summary>
@@ -25,8 +30,34 @@ public sealed record BodyParameters
     /// <summary>Izz about the centre of mass, body frame, kg·m². SPEC §3.2.</summary>
     public double Izz { get; }
 
-    /// <summary>Ixz about the centre of mass, body frame, kg·m². Ixy = Iyz = 0. SPEC §3.2.</summary>
+    /// <summary>Ixz about the centre of mass, body frame, kg·m². SPEC §3.2.</summary>
     public double Ixz { get; }
+
+    /// <summary>y coordinate of the centre of mass in the body frame, m; 0 for planar bodies. SPEC §4.1.</summary>
+    public double Cy { get; }
+
+    /// <summary>Ixy about the centre of mass, body frame, kg·m²; 0 for planar bodies. SPEC §4.1.</summary>
+    public double Ixy { get; }
+
+    /// <summary>Iyz about the centre of mass, body frame, kg·m²; 0 for planar bodies. SPEC §4.1.</summary>
+    public double Iyz { get; }
+
+    /// <summary>
+    /// Centre of mass in the body frame Fi: (ℓ cos ε, Cy, −ℓ sin ε), m. Cy = 0 for the planar bodies of SPEC §4.1.
+    /// </summary>
+    public Vector3d CenterOfMass { get; }
+
+    /// <summary>
+    /// Inertia tensor about the centre of mass in Fi, kg·m²: [[Ixx, Ixy, Ixz], [Ixy, Iyy, Iyz], [Ixz, Iyz, Izz]].
+    /// For the planar bodies of SPEC §4.1 Ixy = Iyz = 0.
+    /// </summary>
+    public Matrix3d Inertia { get; }
+
+    /// <summary>
+    /// True when the centre of mass lies in the body's x–z plane and Ixy = Iyz = 0, as for the
+    /// OpenMANIPULATOR-X (SPEC §3.2). The payload combination of SPEC §5.5 needs this.
+    /// </summary>
+    public bool IsPlanar => Cy == 0.0 && Ixy == 0.0 && Iyz == 0.0;
 
     /// <summary>
     /// Creates a body. SPEC §3.2.
@@ -56,6 +87,40 @@ public sealed record BodyParameters
         Iyy = iyy;
         Izz = izz;
         Ixz = ixz;
+        CenterOfMass = new Vector3d(ell * Math.Cos(eps), 0.0, -ell * Math.Sin(eps));
+        Inertia = inertia;
+    }
+
+    /// <summary>
+    /// Creates a general body from its centre of mass and its full inertia tensor about the centre of mass,
+    /// both in the body frame. SPEC §4.1 ("the same algorithms must work for a 6-DOF chain"). The vector and
+    /// tensor are stored as given; ℓ = √(cx² + cz²) and ε = atan2(−cz, cx) describe their x–z part.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Mass not positive, a value not finite, or the tensor not symmetric and positive definite.
+    /// </exception>
+    public BodyParameters(double mass, Vector3d centerOfMass, Matrix3d inertia)
+    {
+        if (!double.IsFinite(mass) || mass <= 0.0)
+            throw new ArgumentOutOfRangeException(nameof(mass), mass, "Body mass must be a finite number greater than 0 kg (SPEC §3.2).");
+        if (!centerOfMass.IsFinite)
+            throw new ArgumentOutOfRangeException(nameof(centerOfMass), centerOfMass, "Centre of mass must be finite (SPEC §4.1).");
+        if (!inertia.IsSymmetricPositiveDefinite)
+            throw new ArgumentOutOfRangeException(nameof(inertia), inertia,
+                "Inertia tensor must be finite, symmetric and positive definite (SPEC §4.1).");
+
+        Mass = mass;
+        Ell = Math.Sqrt(centerOfMass.X * centerOfMass.X + centerOfMass.Z * centerOfMass.Z);
+        Eps = Math.Atan2(-centerOfMass.Z, centerOfMass.X);
+        Cy = centerOfMass.Y;
+        Ixx = inertia.M00;
+        Iyy = inertia.M11;
+        Izz = inertia.M22;
+        Ixz = inertia.M02;
+        Ixy = inertia.M01;
+        Iyz = inertia.M12;
+        CenterOfMass = centerOfMass;
+        Inertia = inertia;
     }
 
     /// <summary>
@@ -82,9 +147,4 @@ public sealed record BodyParameters
             inertia.M00, inertia.M11, inertia.M22, inertia.M02);
     }
 
-    /// <summary>Centre of mass in the body frame Fi: (ℓ cos ε, 0, −ℓ sin ε). SPEC §4.1.</summary>
-    public Vector3d CenterOfMass => new(Ell * Math.Cos(Eps), 0.0, -Ell * Math.Sin(Eps));
-
-    /// <summary>Inertia tensor about the centre of mass in Fi: [[Ixx, 0, Ixz], [0, Iyy, 0], [Ixz, 0, Izz]]. SPEC §4.1.</summary>
-    public Matrix3d Inertia => new(Ixx, 0.0, Ixz, 0.0, Iyy, 0.0, Ixz, 0.0, Izz);
 }

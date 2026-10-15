@@ -1,3 +1,4 @@
+using System.Globalization;
 using RobotArm.Core.Dynamics;
 using RobotArm.Core.Model;
 
@@ -8,7 +9,8 @@ namespace RobotArm.Core.Simulation;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Near q̇ = 0 the friction of SPEC §5.4 is linear damping with d = fv + fc/ωs on each joint, so the speeds
+/// Near q̇ = 0 the friction of SPEC §5.4 is linear damping with di = fv,i + fc,i/ωs,i on joint i (each joint's
+/// own actuator, <see cref="ArmModel.Actuators"/>), so the speeds
 /// obey q̈ ≈ −M(q)⁻¹ D q̇ with D = diag(d + extra damping). The fastest mode decays at λmax, the largest
 /// eigenvalue of M⁻¹D, and RK4 is stable on the negative real axis only for h·λmax &lt; 2.78.
 /// </para>
@@ -16,6 +18,10 @@ namespace RobotArm.Core.Simulation;
 /// M⁻¹D is similar to the symmetric matrix D^½ M⁻¹ D^½, so its eigenvalues are real and not negative, and
 /// λmax = 1 / λmin(D^−½ M D^−½). The smallest eigenvalue is found by the Jacobi method.
 /// The methods allocate; they are meant for the user interface, not for once per step.
+/// </para>
+/// <para>
+/// Limitations (docs/DECISIONS.md D3): the estimate holds at one pose q only, ignores stiffness (a controller's
+/// Kp and the gravity gradient ∂g/∂q) and treats extra damping as continuous, not as sampled control.
 /// </para>
 /// </remarks>
 public static class StabilityEstimate
@@ -27,7 +33,7 @@ public static class StabilityEstimate
     public const double Rk4StabilityLimit = 2.78;
 
     /// <summary>
-    /// 2.78 / λmax(M(q)⁻¹ D) in s, with D = diag(fv + fc/ωs + extra damping). SPEC §6.2. Returns
+    /// 2.78 / λmax(M(q)⁻¹ D) in s, with D = diag(fv,i + fc,i/ωs,i + extra damping i). SPEC §6.2. Returns
     /// <see cref="double.PositiveInfinity"/> when there is no damping at all.
     /// </summary>
     /// <param name="model">The arm, including any payload; M includes N²·Jm (SPEC §5.2).</param>
@@ -36,7 +42,7 @@ public static class StabilityEstimate
     /// Additional damping per joint in N·m·s/rad, for example a controller's derivative gains; empty for none.
     /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="model"/> is null.</exception>
-    /// <exception cref="ArgumentException">A span has the wrong length.</exception>
+    /// <exception cref="ArgumentException">A span has the wrong length, or an angle in <paramref name="q"/> is not finite.</exception>
     /// <exception cref="ArgumentOutOfRangeException">An extra damping value is negative or not finite.</exception>
     public static double MaxStableStep(ArmModel model, ReadOnlySpan<double> q, ReadOnlySpan<double> extraDamping)
     {
@@ -52,10 +58,10 @@ public static class StabilityEstimate
         MaxStableStep(model, q, ReadOnlySpan<double>.Empty);
 
     /// <summary>
-    /// λmax, the largest eigenvalue of M(q)⁻¹ D in 1/s, with D = diag(fv + fc/ωs + extra damping). SPEC §6.2.
+    /// λmax, the largest eigenvalue of M(q)⁻¹ D in 1/s, with D = diag(fv,i + fc,i/ωs,i + extra damping i). SPEC §6.2.
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="model"/> is null.</exception>
-    /// <exception cref="ArgumentException">A span has the wrong length.</exception>
+    /// <exception cref="ArgumentException">A span has the wrong length, or an angle in <paramref name="q"/> is not finite.</exception>
     /// <exception cref="ArgumentOutOfRangeException">An extra damping value is negative or not finite.</exception>
     public static double MaxDampingRate(ArmModel model, ReadOnlySpan<double> q, ReadOnlySpan<double> extraDamping)
     {
@@ -65,9 +71,11 @@ public static class StabilityEstimate
             throw new ArgumentException($"Expected {n} joint angles, got {q.Length} (SPEC §6.2).", nameof(q));
         if (extraDamping.Length != 0 && extraDamping.Length != n)
             throw new ArgumentException($"Expected 0 or {n} extra damping values, got {extraDamping.Length} (SPEC §6.2).", nameof(extraDamping));
+        for (var i = 0; i < n; i++)
+            if (!double.IsFinite(q[i]))
+                throw new ArgumentException(string.Create(CultureInfo.InvariantCulture,
+                    $"Joint angle q[{i}] = {q[i]} is not finite; the step-size estimate needs a finite pose (SPEC §6.2)."), nameof(q));
 
-        var actuator = model.Actuator;
-        var friction = actuator.ViscousFriction + actuator.CoulombFriction / actuator.SmoothingSpeed;
         var scale = new double[n]; // D^−½, or 0 for an undamped joint
         var anyDamping = false;
         for (var i = 0; i < n; i++)
@@ -76,7 +84,8 @@ public static class StabilityEstimate
             if (!double.IsFinite(extra) || extra < 0.0)
                 throw new ArgumentOutOfRangeException(nameof(extraDamping), extra,
                     "Extra damping must be a finite number of at least 0 N·m·s/rad (SPEC §6.2).");
-            var d = friction + extra;
+            var actuator = model.Actuators[i];
+            var d = actuator.ViscousFriction + actuator.CoulombFriction / actuator.SmoothingSpeed + extra;
             scale[i] = d > 0.0 ? 1.0 / Math.Sqrt(d) : 0.0;
             anyDamping |= d > 0.0;
         }

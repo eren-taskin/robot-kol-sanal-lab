@@ -27,7 +27,7 @@ public sealed class InertiaMatrixTests(ITestOutputHelper output)
     [Fact]
     public void DefaultModel_HasZeroRotorInertia()
     {
-        Assert.Equal(0.0, s_arm.Actuator.RotorInertia);
+        Assert.Equal(0.0, s_arm.Actuators[0].RotorInertia);
     }
 
     [Fact]
@@ -72,12 +72,24 @@ public sealed class InertiaMatrixTests(ITestOutputHelper output)
         var rnea = new RecursiveNewtonEuler(s_arm);
         var random = new Random(37);
         var m = new double[16];
+        var raw = new double[16];
+        var worstAsymmetry = 0.0;
 
         for (var trial = 0; trial < 1000; trial++)
         {
             var q = RandomVector(random, 4, Math.PI);
-            rnea.InertiaMatrix(q, m);
 
+            // Symmetry of the raw Walker–Orin columns, before InertiaMatrix mirrors the lower triangle
+            // (T06 review: checking the mirrored matrix alone is a tautology).
+            rnea.InertiaColumns(q, raw);
+            for (var r = 0; r < 4; r++)
+                for (var c = 0; c < r; c++)
+                    worstAsymmetry = Math.Max(worstAsymmetry, Math.Abs(raw[r * 4 + c] - raw[c * 4 + r]));
+
+            rnea.InertiaMatrix(q, m);
+            for (var r = 0; r < 4; r++)
+                for (var c = 0; c <= r; c++)
+                    Assert.Equal(raw[r * 4 + c], m[r * 4 + c]);  // the lower triangle is the raw one (Jm = 0)
             for (var r = 0; r < 4; r++)
                 for (var c = 0; c < r; c++)
                     Assert.Equal(m[r * 4 + c], m[c * 4 + r]);
@@ -92,6 +104,9 @@ public sealed class InertiaMatrixTests(ITestOutputHelper output)
 
             Cholesky.Factor(m, 4);
         }
+
+        output.WriteLine(Invariant($"V6 raw RNEA columns, 1000 poses: largest |M_rc − M_cr| = {worstAsymmetry:E3}"));
+        Assert.True(worstAsymmetry < 1e-12, Invariant($"{worstAsymmetry:E3}"));
     }
 
     [Fact]
@@ -100,9 +115,9 @@ public sealed class InertiaMatrixTests(ITestOutputHelper output)
         const double jm = 1.0e-7; // kg·m², before the gear
         var plain = new RecursiveNewtonEuler(s_arm);
         var withRotor = new RecursiveNewtonEuler(WithRotorInertia(s_arm, jm));
-        var n = s_arm.Actuator.GearRatio;
+        var n = s_arm.Actuators[0].GearRatio;
         var reflected = n * n * jm;
-        Assert.Equal(reflected, withRotor.Model.Actuator.ReflectedRotorInertia);
+        Assert.Equal(reflected, withRotor.Model.Actuators[0].ReflectedRotorInertia);
 
         var random = new Random(19);
         var m0 = new double[16];

@@ -87,9 +87,30 @@ public sealed class PayloadTests(ITestOutputHelper output)
         Assert.Equal(s_arm.Joints, loaded.Joints);
         Assert.Equal(s_arm.Bodies.Take(3), loaded.Bodies.Take(3));
         Assert.Equal(s_arm.ToolPoint, loaded.ToolPoint);
-        Assert.Equal(s_arm.Actuator, loaded.Actuator);
+        Assert.Equal(s_arm.Actuators, loaded.Actuators);
         // The original model is unchanged.
         Assert.Equal(ArmModel.OpenManipulatorX(), s_arm);
+    }
+
+    [Fact]
+    public void WithPayload_NonPlanarLastBodyOrToolPoint_ThrowsNotSupported()
+    {
+        // SPEC §5.5 is implemented for planar data only; anything else must not silently give a wrong body.
+        var bodies = s_arm.Bodies.ToArray();
+        var last = bodies[^1];
+        var tilted = new Matrix3d(last.Ixx, 1e-6, last.Ixz, 1e-6, last.Iyy, 0.0, last.Ixz, 0.0, last.Izz);
+        bodies[^1] = new BodyParameters(last.Mass, last.CenterOfMass, tilted);
+        var withIxy = new ArmModel(s_arm.Joints, bodies, s_arm.ToolPoint, s_arm.Actuators);
+        Assert.Throws<NotSupportedException>(() => withIxy.WithPayload(0.5));
+
+        var offsetTool = new ArmModel(s_arm.Joints, s_arm.Bodies, new Vector3d(0.126, 0.01, 0.0), s_arm.Actuators);
+        Assert.Throws<NotSupportedException>(() => offsetTool.WithPayload(0.5));
+
+        // A general body that happens to be planar is accepted and gives the same result.
+        bodies[^1] = new BodyParameters(last.Mass, last.CenterOfMass, last.Inertia);
+        Assert.True(bodies[^1].IsPlanar);
+        var general = new ArmModel(s_arm.Joints, bodies, s_arm.ToolPoint, s_arm.Actuators);
+        Assert.Equal(s_arm.WithPayload(0.5).Bodies[^1].Inertia, general.WithPayload(0.5).Bodies[^1].Inertia);
     }
 
     [Fact]
@@ -140,7 +161,7 @@ public sealed class PayloadTests(ITestOutputHelper output)
     {
         var pose = TestVectors.Instance.Poses[index];
         var loaded = s_arm.WithPayload(pose.PayloadKg);
-        Assert.Equal(0.0, loaded.Actuator.RotorInertia);
+        Assert.Equal(0.0, loaded.Actuators[0].RotorInertia);
         var expected = ToArray(pose.M);
         var actual = GeneralInertia(new RecursiveNewtonEuler(loaded), pose.Q);
 

@@ -37,7 +37,9 @@ public sealed class Simulation
     /// <param name="plant">The true arm (SPEC §5.6).</param>
     /// <param name="solver">The integrator, sized for the plant's state (SPEC §6.2).</param>
     /// <param name="initialState">x0 = [q; q̇], length <see cref="ArmPlant.StateCount"/>.</param>
-    /// <param name="checks">The fault checks to run after each step (SPEC §6.4); all by default.</param>
+    /// <param name="checks">
+    /// The fault checks to run after each step (SPEC §6.4); all by default. The non-finite check always runs.
+    /// </param>
     /// <param name="startTime">Initial time, s.</param>
     /// <exception cref="ArgumentNullException">The plant or solver is null.</exception>
     /// <exception cref="ArgumentException">The initial state has the wrong length.</exception>
@@ -92,7 +94,11 @@ public sealed class Simulation
     /// </summary>
     public ReadOnlySpan<bool> Saturated => _saturated;
 
-    /// <summary>The fault checks run after each step. SPEC §6.4. May be changed between steps.</summary>
+    /// <summary>
+    /// The optional fault checks run after each step. SPEC §6.4. May be changed between steps. A non-finite
+    /// state is always a <see cref="FaultReason.NonFinite"/> fault, whether or not <see cref="FaultChecks.NonFinite"/>
+    /// is set (docs/DECISIONS.md D5).
+    /// </summary>
     public FaultChecks Checks { get; set; }
 
     /// <summary>The fault that stopped the simulation, or null while it runs. SPEC §6.4.</summary>
@@ -142,12 +148,11 @@ public sealed class Simulation
 
     private Fault? DetectFault()
     {
-        if ((Checks & FaultChecks.NonFinite) != 0)
-        {
-            foreach (var v in _state)
-                if (!double.IsFinite(v))
-                    return new Fault(FaultReason.NonFinite, Time, -1, double.NaN);
-        }
+        // A NaN or infinite state is never valid, so it is always reported, whatever Checks says, and before
+        // the joint-limit check, which would otherwise call a NaN angle a JointLimit fault (docs/DECISIONS.md D5).
+        foreach (var v in _state)
+            if (!double.IsFinite(v))
+                return new Fault(FaultReason.NonFinite, Time, -1, double.NaN);
 
         var model = _plant.Model;
         if ((Checks & FaultChecks.JointLimit) != 0)

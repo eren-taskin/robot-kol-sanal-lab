@@ -71,6 +71,54 @@ public sealed class ArmPlantTests(ITestOutputHelper output)
         Assert.Equal([true, false, true, false], recorder.Inner.Saturated.ToArray());
     }
 
+    [Theory]
+    [InlineData(1, double.NaN)]      // angle q2
+    [InlineData(5, double.NaN)]      // speed q̇2, angles finite
+    [InlineData(7, double.PositiveInfinity)]
+    [InlineData(0, double.NegativeInfinity)]
+    public void Derivatives_NonFiniteState_GivesNaN_AndClearsTorqueAndSaturation(int index, double value)
+    {
+        var plant = new ArmPlant(s_arm, Planet.Earth);
+        var dx = new double[8];
+
+        // A first call with saturation, so that stale values would show.
+        plant.Derivatives(0.0, new double[8], [10.0, -10.0, 1.0, 0.5], dx);
+        Assert.Equal([true, true, false, false], plant.Saturated.ToArray());
+
+        var x = new double[] { 0.1, 0.2, 0.3, 0.4, 0.5, -0.2, 0.1, 0.3 };
+        x[index] = value;
+        plant.Derivatives(0.0, x, [10.0, -10.0, 1.0, 0.5], dx);
+
+        Assert.All(dx, v => Assert.True(double.IsNaN(v)));
+        Assert.All(plant.AppliedTorque.ToArray(), v => Assert.True(double.IsNaN(v)));
+        Assert.Equal([false, false, false, false], plant.Saturated.ToArray());
+    }
+
+    [Fact]
+    public void Derivatives_UsePerJointActuators_ForSaturationAndFriction()
+    {
+        var actuators = s_arm.Actuators.ToArray();
+        actuators[1] = actuators[1] with { StallTorque = 1.0, ViscousFriction = 0.3 };
+        var arm = new ArmModel(s_arm.Joints, s_arm.Bodies, s_arm.ToolPoint, actuators);
+        var plant = new ArmPlant(arm, Planet.Earth);
+        double[] x = [0.0, 0.2, 0.3, -0.1, 0.4, 0.7, -0.5, 0.2];
+        double[] u = [2.0, 2.0, 2.0, 2.0];
+        var dx = new double[8];
+
+        plant.Derivatives(0.0, x, u, dx);
+
+        Assert.Equal([2.0, 1.0, 2.0, 2.0], plant.AppliedTorque.ToArray());
+        Assert.Equal([false, true, false, false], plant.Saturated.ToArray());
+
+        // Same accelerations as the default arm with joint 2's different friction and torque moved into u.
+        var a = s_arm.Actuators[1];
+        var b = actuators[1];
+        var frictionDifference = (b.ViscousFriction - a.ViscousFriction) * x[5];
+        var expected = new double[8];
+        new ArmPlant(s_arm, Planet.Earth).Derivatives(0.0, x, [2.0, 1.0 - frictionDifference, 2.0, 2.0], expected);
+        Assert.Equal(0.0, DynamicsTestHelpers.MaxAbsDifference(expected, dx), 1e-12);
+    }
+
     [Fact]
     public void Derivatives_WithFriction_MatchClosedFormForwardDynamics()
     {
@@ -81,7 +129,7 @@ public sealed class ArmPlantTests(ITestOutputHelper output)
         var plant = new ArmPlant(s_arm, planet);
         plant.SetPayload(0.3);
         var closed = new ClosedFormArm(arm);
-        var a = arm.Actuator;
+        var a = arm.Actuators[0];
         var random = new Random(11);
         var dx = new double[8];
         var worst = 0.0;

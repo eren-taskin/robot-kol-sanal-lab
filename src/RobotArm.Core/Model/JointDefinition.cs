@@ -8,6 +8,9 @@ public enum JointAxis
 
     /// <summary>Rotation about the local y axis (pitch), Ry(q); positive tips the arm down.</summary>
     Y,
+
+    /// <summary>Rotation about the local x axis (roll), Rx(q), for wrists of longer chains such as a 6-DOF arm.</summary>
+    X,
 }
 
 /// <summary>
@@ -41,7 +44,7 @@ public sealed record JointDefinition
         if (!origin.IsFinite)
             throw new ArgumentOutOfRangeException(nameof(origin), origin, "Joint origin must be finite (SPEC §4.1).");
         if (!Enum.IsDefined(axis))
-            throw new ArgumentOutOfRangeException(nameof(axis), axis, "Joint axis must be Z or Y (SPEC §4.1).");
+            throw new ArgumentOutOfRangeException(nameof(axis), axis, "Joint axis must be Z, Y or X (SPEC §4.1).");
         if (!double.IsFinite(lowerLimit))
             throw new ArgumentOutOfRangeException(nameof(lowerLimit), lowerLimit, "Lower joint limit must be finite (SPEC §3.4).");
         if (!double.IsFinite(upperLimit))
@@ -57,7 +60,12 @@ public sealed record JointDefinition
     }
 
     /// <summary>Unit vector of <see cref="Axis"/> in the joint's own frame. SPEC §4.1.</summary>
-    public Vector3d AxisVector => Axis == JointAxis.Z ? Vector3d.UnitZ : Vector3d.UnitY;
+    public Vector3d AxisVector => Axis switch
+    {
+        JointAxis.Z => Vector3d.UnitZ,
+        JointAxis.Y => Vector3d.UnitY,
+        _ => Vector3d.UnitX,
+    };
 
     /// <summary>
     /// True when <paramref name="angle"/> (rad) lies within [LowerLimit, UpperLimit]. A query only, for

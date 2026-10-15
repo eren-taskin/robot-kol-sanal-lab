@@ -38,15 +38,19 @@ public sealed class FreeMotionTests(ITestOutputHelper output)
         var rnea = new RecursiveNewtonEuler(arm);
         var e0 = Energy(arm, rnea, Vectors.G, sim.State);
         var worst = 0.0;
+        var moved = 0.0;
 
         for (var i = 0; i < Steps(0.4, 2e-3); i++)
         {
             sim.Advance(s_zeroTorque, 2e-3);
             worst = Math.Max(worst, Math.Abs(Energy(arm, rnea, Vectors.G, sim.State) - e0));
+            moved = Math.Max(moved, MaxAbsDiff(sim.Q, Vectors.X0.AsSpan(0, 4)));
         }
 
-        output.WriteLine(Invariant($"V9 max |E − E0| over 0.4 s at h = 2 ms: {worst:E3} J (Python reference about 2.3e-6 J)"));
+        output.WriteLine(Invariant($"V9 max |E − E0| over 0.4 s at h = 2 ms: {worst:E3} J (Python reference about 2.3e-6 J); max |q − q0| = {moved:F3} rad"));
         Assert.Null(sim.Fault);
+        // A frozen simulation would conserve energy too, so the arm must also have moved.
+        Assert.True(moved > 0.1, Invariant($"the state hardly moved: {moved:E3} rad"));
         Assert.True(worst < 1e-5, Invariant($"energy drift {worst:E3} J"));
     }
 
@@ -57,6 +61,7 @@ public sealed class FreeMotionTests(ITestOutputHelper output)
         var rnea = new RecursiveNewtonEuler(sim.Plant.Model);
         var min = double.PositiveInfinity;
         var max = double.NegativeInfinity;
+        var moved = 0.0;
 
         // Same sampling as the reference script: p1 after each step.
         for (var i = 0; i < Steps(0.4, 2e-3); i++)
@@ -65,10 +70,12 @@ public sealed class FreeMotionTests(ITestOutputHelper output)
             var p1 = YawMomentum(rnea, sim.State);
             min = Math.Min(min, p1);
             max = Math.Max(max, p1);
+            moved = Math.Max(moved, MaxAbsDiff(sim.Q, Vectors.X0.AsSpan(0, 4)));
         }
 
         var drift = max - min;
-        output.WriteLine(Invariant($"V10 p1 = Σ M1j q̇j: max − min over 0.4 s at h = 2 ms = {drift:E3} (Python reference about 8e-9), p1 ≈ {max:R}"));
+        output.WriteLine(Invariant($"V10 p1 = Σ M1j q̇j: max − min over 0.4 s at h = 2 ms = {drift:E3} (Python reference about 8e-9), p1 ≈ {max:R}; max |q − q0| = {moved:F3} rad"));
+        Assert.True(moved > 0.1, Invariant($"the state hardly moved: {moved:E3} rad"));
         Assert.True(drift < 1e-7, Invariant($"p1 drift {drift:E3}"));
     }
 

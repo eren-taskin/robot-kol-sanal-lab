@@ -13,7 +13,7 @@ internal static class SimulationTestHelpers
     {
         var arm = ArmModel.OpenManipulatorX();
         return new ArmModel(arm.Joints, arm.Bodies, arm.ToolPoint,
-            arm.Actuator with { ViscousFriction = 0.0, CoulombFriction = 0.0, RotorInertia = 0.0 });
+            arm.Actuators[0] with { ViscousFriction = 0.0, CoulombFriction = 0.0, RotorInertia = 0.0 });
     }
 
     /// <summary>A simulation of the free-motion run of the vectors: Earth, RK4, faults off.</summary>
