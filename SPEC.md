@@ -318,37 +318,37 @@ Linearised at rest at q0 with the constant reference q_d = q0 (used by §6.3), e
 - PDG: K = [Kp − Ĝ | Kd]. ĝ is computed from the sample and held, so Ĝ belongs to the sampled feedback.
 - CT: K = [P Kp − Ĝ | P Kd − Ĝ·Ts/2 − D̂] with P = M̂ + Ĝ·Ts²/8 + D̂·Ts/2 (Ts = 0 without the prediction).
 
-**Criterion for the default gains.** On Earth with no payload, exact belief, perfect sensor, default h and Ts: from rest at A = [0, −0.6, −0.3, −0.3] rad to the set point B = A + [0, 0.5, 0.5, 0.5] rad, and from B back to A, every joint stays within 0.01 rad (2 % of the step) of the set point from at most 1 s on, and the controller never clamps its output (so the plant never saturates). The tool is 0.39 m above the floor at A and 0.14 m at B. A PD-type law starts with |u| = Kp·0.5 + |ĝ|, so Kp·0.5 must stay well below 4.1 N·m.
+**Criterion for the default gains.** On Earth with no payload, exact belief, perfect sensor, default h and Ts: from rest at A = [0, −0.6, −0.3, −0.3] rad to the set point B = A + [0, 0.5, 0.5, 0.5] rad, and from B back to A, every joint stays within 0.01 rad (2 % of the step) of the set point from at most 1 s on, and the plant never saturates; PID and PDG also never clamp their output, while CT's A1c gains clamp briefly at the start of the discontinuous step (docs/DECISIONS.md A1c). The tool is 0.39 m above the floor at A and 0.14 m at B. A PD-type law starts with |u| = Kp·0.5 + |ĝ|, so Kp·0.5 must stay well below 4.1 N·m.
 
-**Default gains** (found in T07):
+**Default gains** (T07; CT retuned in A1c, CT+I in A1b):
 
 | Gain | Joint 1 | Joint 2 | Joint 3 | Joint 4 | Unit |
 |---|---|---|---|---|---|
 | PDG and PID Kp | 6 | 6 | 6 | 2 | N·m/rad |
 | PDG and PID Kd | 0.3 | 0.6 | 0.3 | 0.05 | N·m·s/rad |
 | PID Ki | 5 | 20 | 20 | 8 | N·m/(rad·s) |
-| CT Kp | 144 | 144 | 144 | 144 | 1/s² (ωn = 12 rad/s) |
-| CT Kd | 24 | 24 | 24 | 24 | 1/s (ζ = 1) |
+| CT Kp | 1600 | 1600 | 1800 | 1800 | 1/s² |
+| CT Kd | 350 | 350 | 350 | 350 | 1/s |
 | CT+I Kp | 3600 | 3600 | 3600 | 3600 | 1/s² (ωn = 60 rad/s) |
 | CT+I Kd | 360 | 360 | 360 | 360 | 1/s (ζ = 3) |
 | CT+I Ki | 10000 | 10000 | 10000 | 10000 | 1/s³ |
 
-**Measured with these gains** (T07; perfect sensor, default h = 0.5 ms and Ts = 2 ms). Settling time in s for A→B / B→A; C = the controller clamped its output; F = fault (§6.4); ">2" = not settled after 2 s.
+**Measured with these gains** (T07, A1c; perfect sensor, default h = 0.5 ms and Ts = 2 ms). Settling time in s for A→B / B→A; C = the controller clamped its output; F = fault (§6.4); ">2" = not settled after 2 s.
 
 | Planet | Payload | PID | PDG | CT |
 |---|---|---|---|---|
-| Earth | 0 | 0.83 / 0.75 | 0.29 / 0.33 | 0.49 / 0.49 |
-| Earth | 0.5 kg | F floor / >2 C | 1.68 / 1.97 C | 0.58 C / F limit j4 |
-| Moon | 0 | 0.83 / 0.79 | 0.29 / 0.33 | 0.49 / 0.49 |
-| Moon | 0.5 kg | F floor / >2 | 1.68 / 1.96 | 0.64 C / 0.63 C |
-| Mars | 0 | 0.83 / 0.78 | 0.29 / 0.33 | 0.49 / 0.49 |
-| Mars | 0.5 kg | F floor / >2 | 1.68 / 1.96 | 0.62 C / 0.69 C |
-| HighG | 0 | 1.14 / 1.20 | 0.29 / 0.33 | 0.49 / 0.49 |
-| HighG | 0.5 kg | F floor / F floor | F floor / F floor | F limit j4 / F limit j4 |
-| Orbit | 0 | 0.83 / 0.81 | 0.29 / 0.33 | 0.49 / 0.49 |
-| Orbit | 0.5 kg | F floor / >2 | 1.68 / 1.96 | 0.65 C / 0.57 C |
+| Earth | 0 | 0.83 / 0.75 | 0.29 / 0.33 | 0.87 C / 0.85 C |
+| Earth | 0.5 kg | F floor / >2 C | 1.68 / 1.97 C | 0.96 C / 1.07 C |
+| Moon | 0 | 0.83 / 0.79 | 0.29 / 0.33 | 0.87 C / 0.85 C |
+| Moon | 0.5 kg | F floor / >2 | 1.68 / 1.96 | 0.96 C / 0.99 C |
+| Mars | 0 | 0.83 / 0.78 | 0.29 / 0.33 | 0.87 C / 0.85 C |
+| Mars | 0.5 kg | F floor / >2 | 1.68 / 1.96 | 0.96 C / 1.00 C |
+| HighG | 0 | 1.14 / 1.20 | 0.29 / 0.33 | 0.87 C / 0.86 C |
+| HighG | 0.5 kg | F floor / F floor | F floor / F floor | F limit j3 / F limit j4 |
+| Orbit | 0 | 0.83 / 0.81 | 0.29 / 0.33 | 0.87 C / 0.85 C |
+| Orbit | 0.5 kg | F floor / >2 | 1.68 / 1.96 | 0.96 C / 0.98 C |
 
-Peak |u| on Earth without payload: PID 3.70, PDG 3.58, CT 1.92 N·m. With 0.5 kg the PID's integral winds up during the slow rise and overshoots into the floor even in orbit; CT clamps joints 2 and 3 while the light wrist is not clamped, which breaks the decoupling and throws the wrist into its limit.
+Peak |u| on Earth without payload: PID 3.70, PDG 3.58, CT 4.10 N·m (clamped at the initial sample of the discontinuous step; on smooth quintics such as V18(a) and the Earth reach scenario, peak |u| is 1.31 N·m without clamping). With 0.5 kg the PID's integral winds up during the slow rise and overshoots into the floor even in orbit; CT settles without fault on Earth, Moon, Mars and Orbit with both 0 and 0.5 kg, and faults only on HighG with 0.5 kg where the static gravity torque exceeds 4.1 N·m.
 
 Sampled-loop stability (§6.3) at the poses A, B and C = [0.5, −1.0, 0.3, 0.7], every planet, 0 and 0.5 kg:
 
@@ -356,11 +356,11 @@ Sampled-loop stability (§6.3) at the poses A, B and C = [0.5, −1.0, 0.3, 0.7]
 |---|---|---|
 | PID (PD part) | 0.9845–0.9944 | 6.5–29.7 ms; HighG, 0.5 kg, pose A: unstable at any Ts (ρ = 1.008), Kp cannot hold the gravity gradient |
 | PDG | 0.9845–0.9945 | 6.5–29.5 ms |
-| CT | 0.9785–0.9818 | 80.7–86.2 ms |
+| CT | 0.9908–0.9908 | 5.7–5.7 ms |
 
-The smallest MaxStableTs, 6.5 ms at pose A without payload, is set by the yaw joint, whose inertia m11 = 8.1e-4 kg·m² is small when the arm leans back over the base. ρ close to 1 at 2 ms means slow modes, not a stability problem: ρ = e^{−σ·Ts} with σ ≈ 3–11 1/s, the decay rate of the slowest mode.
+The smallest MaxStableTs for PID/PDG, 6.5 ms at pose A without payload, is set by the yaw joint, whose inertia m11 = 8.1e-4 kg·m² is small when the arm leans back over the base; for CT, Kd = 350 1/s sets MaxStableTs ≈ 5.7 ms across poses A, B, C. ρ close to 1 at 2 ms means slow modes, not a stability problem: ρ = e^{−σ·Ts} with σ ≈ 3–11 1/s, the decay rate of the slowest mode.
 
-**CT+I robustness option (T08, A1b, D8).** Enabling CT+I in a scenario selects the separately tuned defaults above, unless gains are explicitly supplied. Simply adding a large Ki to CT's original Kp/Kd can destabilise the forgotten-payload case, while Kd = 80 1/s left the unloaded wrist with only 1.28 dB gain margin and 15.1° phase margin because P44·Kd < d4 = 0.21 N·m·s/rad left the linearised velocity feedback negative (friction cancellation dominating Kd). With Kp = 3600 1/s², Kd = 360 1/s and Ki = 10000 1/s³, P44·Kd > d4 on every joint, and across all five planets, payloads 0 and 0.5 kg, and all library scenario start poses the 12-state augmented closed loop (§12.2) has ρ ≤ 0.9898 < 1, loop-at-a-time gain margin ≥ 7.43 dB (≥ 6 dB) and phase margin ≥ 46.57° (≥ 40°) on every joint (9.21 dB and 51.94° on the wrist at the reach start pose). In V18(b), with plant 0.3 kg and belief 0 kg, the same 1 s quintic and 0.5 s hold (end t = 1.5 s) give maximum final joint errors: ordinary CT **0.7287002454 rad**, CT+I **0.0069754717 rad** (< 1e-2), and CT with CT+I's Kp/Kd but Ki = 0 **0.3376327568 rad**. All are fault-free. Peak errors over the run are 1.119293392 rad for ordinary CT and 0.2483847706 rad for CT+I: this is rejection of a persistent disturbance, not elimination of the initial transient. The library runs the same move to 10 s to demonstrate task-level settling (settling at 1.28 s). The PD-only linearisation of §6.3 excludes the integral state, whereas §12.2–§12.4 include it.
+**CT and CT+I robustness (T08, A1b, A1c, D8, D9).** With the original T07 plain CT defaults (Kp = 144 1/s², Kd = 24 1/s), the unloaded wrist at Pose B in Orbit had only 0.34 dB gain margin and 15.91° phase margin (and 10.31° on joint 3 at HighG, 0.5 kg, reach start pose) because P44·Kd = 0.0139 < d4 = 0.21 N·m·s/rad left the net linearised velocity feedback negative (friction cancellation dominating Kd). Retuning plain CT in A1c to Kp = [1600, 1600, 1800, 1800] 1/s² and Kd = [350, 350, 350, 350] 1/s gives ρ ≤ 0.9908 < 1, gain margin ≥ 7.19 dB ([9.15, 9.36, 10.75, 7.19] dB worst case per joint) and phase margin ≥ 62.51° ([69.24°, 71.83°, 89.68°, 62.51°] worst case per joint) across all five planets, payloads 0 and 0.5 kg, and all library scenario start poses. Enabling CT+I in a scenario selects the separately tuned defaults above (Kp = 3600 1/s², Kd = 360 1/s, Ki = 10000 1/s³), unless gains are explicitly supplied: across the same 30 cases its 12-state augmented closed loop (§12.2) has ρ ≤ 0.9898 < 1, loop-at-a-time gain margin ≥ 7.43 dB (≥ 6 dB) and phase margin ≥ 46.57° (≥ 40°) on every joint (9.21 dB and 51.94° on the wrist at the reach start pose). In V18(b), with plant 0.3 kg and belief 0 kg, the same 1 s quintic and 0.5 s hold (end t = 1.5 s) give maximum final joint errors: ordinary CT **0.5542987672 rad**, CT+I **0.0069754717 rad** (< 1e-2), and CT with CT+I's Kp/Kd but Ki = 0 **0.3376327568 rad**. All are fault-free. Peak errors over the run are 0.559830798 rad for ordinary CT and 0.2483847706 rad for CT+I: this is rejection of a persistent disturbance, not elimination of the initial transient. The library runs the same move to 10 s to demonstrate task-level settling (settling at 1.28 s). The PD-only linearisation of §6.3 excludes the integral state, whereas §12.2–§12.4 include it.
 
 ## 8. References, tasks and scenarios
 
@@ -477,7 +477,7 @@ Added in A1 (linear analysis, §12):
 | V36 | Eigenvalues: diagonal, companion matrix of 9 known roots [1e-9], rotation block (exact conjugate pair), 16 × 16 similarity V D V⁻¹ [1e-10]; on 50 random 12 × 12 matrices Σλ = trace [1e-12·‖A‖F] and Πλ = det [1e-9 relative]; max \|λ\| equals the §6.3 spectral radius on the arm for PID, PDG, CT × every planet × 0, 0.5 kg × poses A, B, C [1e-9] | §12.1 |
 | V37 | Closed-loop model: 8 poles for PDG and CT, 12 for PID and CT+I; ρ equals §6.3 for the PD-type laws [1e-9]; for a 1e-6 step and offset the augmented model reproduces each controller's own `Compute` driving x_{k+1} = Φx + Γ(u − u0) over 200 samples [1e-3 of the signal]; s = ln(z)/Ts round trip | §12.2 |
 | V38 | Root locus: 1-DOF mass–spring–damper with sampled PD, poles equal the roots of the closed-form characteristic polynomial [1e-12] and the critical scale factor equals the Jury closed form [1e-8 relative], also with Φ, Γ by RK4 sub-steps; on the arm, tracks are continuous (relative pole step ≤ 0.05) and each crossing separates ρ < 1 from ρ > 1 at ±1e-6 | §12.3 |
-| V39 | Frequency response: 1-DOF L(e^{jωTs}) equals the analytic discrete loop [1e-9 dB, 1e-7°]; gain margin (dB) = 20·log10 of the critical scale factor of V38 [1e-6 dB]; \|L(ω_gc)\| = 1; on the arm (PDG, CT+I) L is real and negative at ω_pc, and scaling joint i's row of K_ξ by the gain margin puts ρ on 1 [1e-6]; across all five planets × payloads 0 and 0.5 kg × library scenario start poses, the default gains of all four controllers keep ρ < 1 and CT+I keeps gain margin ≥ 6 dB and phase margin ≥ 40° on every joint | §12.4 |
+| V39 | Frequency response: 1-DOF L(e^{jωTs}) equals the analytic discrete loop [1e-9 dB, 1e-7°]; gain margin (dB) = 20·log10 of the critical scale factor of V38 [1e-6 dB]; \|L(ω_gc)\| = 1; on the arm (PDG, CT+I) L is real and negative at ω_pc, and scaling joint i's row of K_ξ by the gain margin puts ρ on 1 [1e-6]; across all five planets × payloads 0 and 0.5 kg × library scenario start poses, the default gains of all four controllers keep ρ < 1 and both CT and CT+I keep gain margin ≥ 6 dB and phase margin ≥ 40° on every joint | §12.4 |
 | V40 | Linear step response against the nonlinear run at the start pose of "Dünya – boş kol – noktaya git": CT and CT+I at 0.01 rad and PDG at 0.003 rad on every joint agree within 2 % of the step (and PDG at 0.01 rad with friction replaced by its slope); the 0.01 rad PDG step on the true plant (3.26 %, within 5 %) is kept as a documented observation of the Coulomb friction band (D9); 0.5 rad reported; linear PDG ends at q0 + δr [1e-8] | §12.5 |
 | V41 | LQR: scalar DARE against its closed form [1e-12]; arm DARE residual < 1e-9 and LQR loop stable on every planet × 0, 0.5 kg × poses A, B, C; the projection is the diagonal of K | §12.6 |
 | V42 | Gain tuner: optimises over a scenario or a list of scenarios (`Sum` or `Max` cost), optionally evaluating each candidate with both perfect and encoder sensors (`PerfectAndEncoder`), with minimum gain margin and phase margin enforced as hard constraints via `LoopFrequencyResponse` at each scenario's start pose; tuning on "Dünya – boş kol – noktaya git" with both sensors (10 evaluations in the normal suite, 60 evaluations in the Report category) gives gains that pass that scenario with the encoder; same seed gives the same history; cancellation returns the evaluations done | §12.7 |
@@ -532,7 +532,7 @@ The loop of joint i is opened at its input with the other loops closed: A_i = A_
 
 ### 12.5 Linear step response
 
-`LinearStepResponse.Compute` runs ξ_{k+1} = A_cl ξ_k + B_cl δr from ξ0 = 0 for a step δr of the joint reference at t = 0 and returns q, q̇ and δu at every controller sample, like the log rows of §10. It agrees with the nonlinear run within 2 % for small steps (V40): 0.01 rad for CT (0.30 %) and CT+I (0.79 %), and 0.003 rad for PDG (0.32 %, or 0.08 % at 0.01 rad when Coulomb friction is replaced by its slope). On the true plant at 0.01 rad, PDG's yaw joint reaches 0.12 rad/s > ωs = 0.1 rad/s and the prediction differs by 3.26 %, kept as a documented observation of the Coulomb friction band. CT cancels friction and inertia and stays close to linear even at 0.5 rad (1.87 %).
+`LinearStepResponse.Compute` runs ξ_{k+1} = A_cl ξ_k + B_cl δr from ξ0 = 0 for a step δr of the joint reference at t = 0 and returns q, q̇ and δu at every controller sample, like the log rows of §10. It agrees with the nonlinear run within 2 % for small steps (V40): 0.01 rad for CT (0.42 %) and CT+I (0.79 %), and 0.003 rad for PDG (0.32 %, or 0.08 % at 0.01 rad when Coulomb friction is replaced by its slope). On the true plant at 0.01 rad, PDG's yaw joint reaches 0.12 rad/s > ωs = 0.1 rad/s and the prediction differs by 3.26 %, kept as a documented observation of the Coulomb friction band. CT cancels friction and inertia and stays close to linear even at 0.5 rad (5.39 %, with brief controller clamping at t = 0).
 
 ### 12.6 Discrete LQR
 

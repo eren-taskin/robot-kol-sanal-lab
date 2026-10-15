@@ -43,7 +43,8 @@ public sealed class ControllerTests(ITestOutputHelper output)
     public void ComputedTorque_ComputesInverseDynamicsOfTheCommandedAccelerationPlusFriction()
     {
         var belief = ControllerBelief.OpenManipulatorX(Planet.Earth, 0.3);
-        var ctl = new ComputedTorque(belief, ComputedTorque.DefaultGains);
+        var gains = new PdGains([144.0, 144.0, 144.0, 144.0], [24.0, 24.0, 24.0, 24.0]);
+        var ctl = new ComputedTorque(belief, gains);
         var u = new double[4];
         ctl.Compute(0.0, s_q, s_qd, Reference(), u);
 
@@ -54,7 +55,7 @@ public sealed class ControllerTests(ITestOutputHelper output)
         var c = closed.Coriolis(s_q, s_qd);
         var a = new double[4];
         for (var i = 0; i < 4; i++)
-            a[i] = s_refAcc[i] + ComputedTorque.DefaultGains.Kd[i] * (s_refVel[i] - s_qd[i]) + ComputedTorque.DefaultGains.Kp[i] * (s_ref[i] - s_q[i]);
+            a[i] = s_refAcc[i] + gains.Kd[i] * (s_refVel[i] - s_qd[i]) + gains.Kp[i] * (s_ref[i] - s_q[i]);
         var actuator = belief.Model.Actuators[0];
         for (var i = 0; i < 4; i++)
         {
@@ -203,8 +204,9 @@ public sealed class ControllerTests(ITestOutputHelper output)
 
     /// <summary>
     /// SPEC §7 criterion for the default gains: Earth, no payload, a 0.5 rad step on each pitch joint (A → B and
-    /// B → A) settles within 1 s into the 2 % band (0.01 rad) and never saturates (the controller never clamps
-    /// and the plant never saturates). Perfect sensor, default h and Ts.
+    /// B → A) settles within 1 s into the 2 % band (0.01 rad) without plant saturation; PID and PDG also never
+    /// clamp their output, while CT's A1c gains clamp briefly at the start of the discontinuous step (docs/DECISIONS.md A1c).
+    /// Perfect sensor, default h and Ts.
     /// </summary>
     [Theory]
     [InlineData(ControllerKind.Pid)]
@@ -219,7 +221,8 @@ public sealed class ControllerTests(ITestOutputHelper output)
             Assert.Null(r.Fault);
             Assert.True(r.Settled);
             Assert.True(r.SettlingTime <= 1.0, Invariant($"{kind} {name}: {r.SettlingTime} s"));
-            Assert.False(r.Clamped);
+            if (kind != ControllerKind.ComputedTorque)
+                Assert.False(r.Clamped);
             Assert.False(r.PlantSaturated);
         }
     }

@@ -93,12 +93,14 @@ public sealed class ComputedTorque : IController, IAugmentedLinearisableControll
     }
 
     /// <summary>
-    /// Default gains for the OpenMANIPULATOR-X (joints 1–4), found in T07 so that SPEC §7's criterion holds:
-    /// ωn = 12 rad/s and ζ = 1 on every joint. Kp in 1/s², Kd in 1/s. SPEC §7.
+    /// Default gains for the OpenMANIPULATOR-X (joints 1–4), retuned in A1c so that every joint has at least 6 dB gain
+    /// margin and 40° phase margin across all library start poses, planets and payloads (0 and 0.5 kg) while keeping
+    /// the SPEC §7 step settling time under 1 s and V18 quintic tracking error below 1e-3 rad:
+    /// Kp = [1600, 1600, 1800, 1800] 1/s², Kd = [350, 350, 350, 350] 1/s. SPEC §7; docs/DECISIONS.md A1c.
     /// </summary>
     public static PdGains DefaultGains { get; } = new(
-        [144.0, 144.0, 144.0, 144.0],
-        [24.0, 24.0, 24.0, 24.0]);
+        [1600.0, 1600.0, 1800.0, 1800.0],
+        [350.0, 350.0, 350.0, 350.0]);
 
     /// <summary>The controller's model (SPEC §5.6).</summary>
     public ControllerBelief Belief { get; private set; }

@@ -96,7 +96,7 @@ public sealed class LoopFrequencyResponseTests(ITestOutputHelper output)
     /// <summary>
     /// Regression check across all five planets, payloads 0 and 0.5 kg, and the distinct start poses of
     /// <see cref="ScenarioLibrary.All"/> for the default gains of all four controllers (PID, PDG, CT, CT+I).
-    /// CT+I must keep ρ &lt; 1, gain margin ≥ 6 dB and phase margin ≥ 40° on every joint in every case.
+    /// CT and CT+I must keep ρ &lt; 1, gain margin ≥ 6 dB and phase margin ≥ 40° on every joint in every case.
     /// </summary>
     [Fact]
     public void DefaultGains_MarginsAtLibraryStartPoses_DoNotRegress()
@@ -144,10 +144,10 @@ public sealed class LoopFrequencyResponseTests(ITestOutputHelper output)
                             minAbsGm[j] = Math.Min(minAbsGm[j], Math.Abs(b.GainMarginDb));
                             minPm[j] = Math.Min(minPm[j], b.PhaseMarginDeg);
 
-                            if (law == "CT+I")
+                            if (law is "CT" or "CT+I")
                             {
-                                Assert.True(b.GainMarginDb >= 6.0, Invariant($"CT+I J{j + 1} {planet.Key} {payload} kg ({poseName}): GM = {b.GainMarginDb:F2} dB"));
-                                Assert.True(b.PhaseMarginDeg >= 40.0, Invariant($"CT+I J{j + 1} {planet.Key} {payload} kg ({poseName}): PM = {b.PhaseMarginDeg:F2}°"));
+                                Assert.True(b.GainMarginDb >= 6.0, Invariant($"{law} J{j + 1} {planet.Key} {payload} kg ({poseName}): GM = {b.GainMarginDb:F2} dB"));
+                                Assert.True(b.PhaseMarginDeg >= 40.0, Invariant($"{law} J{j + 1} {planet.Key} {payload} kg ({poseName}): PM = {b.PhaseMarginDeg:F2}°"));
                             }
                             else if (law == "PDG" && pIndex != 1)
                             {
@@ -173,10 +173,10 @@ public sealed class LoopFrequencyResponseTests(ITestOutputHelper output)
                     Assert.True(minAbsGm[j] >= 1.0);
                     Assert.True(minPm[j] >= 10.9);
                 }
-                else if (law == "CT")
+                else if (law is "CT" or "CT+I")
                 {
-                    Assert.True(minGm[j] >= 0.34);
-                    Assert.True(minPm[j] >= 10.3);
+                    Assert.True(minGm[j] >= 6.0);
+                    Assert.True(minPm[j] >= 40.0);
                 }
             }
         }
