@@ -76,16 +76,16 @@ Predicted limit 2.78/λmax with ωs = 0.01, unloaded: 0.164 ms at q = 0, 0.165�
 
 - ωs = 0.1 rad/s (SPEC §3.3). Then d = 0.21 N·m·s/rad. The friction torque still reaches 76 % of fc at 0.1 rad/s and 99.9 % at 0.4 rad/s, so the model stays a Coulomb model at the speeds of the tasks.
 - Default step h = 0.5 ms (SPEC §6.2); the allowed range stays 0.1 to 5 ms.
-- `StabilityEstimate.MaxStableStep(model, q, extraDamping)` returns 2.78/λmax(M(q)⁻¹D) with D = diag(fv + fc/ωs + extra damping). The extra damping is for later controllers (derivative gains). M⁻¹D is similar to D^½M⁻¹D^½, so λmax = 1/λmin(D^−½ M D^−½), found by the Jacobi method; joints without damping are handled through the Schur complement of M. The UI warns when the chosen h exceeds this limit (SPEC §6.2).
+- `StabilityEstimate.MaxStableStep(model, q, extraDamping)` returns 2.78/λmax(M(q)⁻¹D) with D = diag(fv + fc/ωs + extra damping). ~~The extra damping is for later controllers (derivative gains).~~ Corrected in T07 (D6): controller gains do not enter this limit; the extra damping is only for continuous damping that the actuator parameters leave out. M⁻¹D is similar to D^½M⁻¹D^½, so λmax = 1/λmin(D^−½ M D^−½), found by the Jacobi method; joints without damping are handled through the Schur complement of M. The UI warns when the chosen h exceeds this limit (SPEC §6.2).
 
 **Result with the new defaults.** The smallest MaxStableStep over 1000 random poses inside the limits is 1.27 ms unloaded and 2.78 ms with 0.5 kg. So the default 0.5 ms has a margin of at least 2.5, and even 1 ms is stable. V13 at h = 0.5 ms: max |q̇| ≤ 3.2e-15 rad/s on all five planets, 0 and 0.5 kg. A payload can only raise the limit, because it adds a positive semidefinite term to M.
 
 **Consequences.**
 - The old case is kept as a deliberate regression test (`LectureNote1Lesson_StepAboveStabilityLimit_MakesHeldArmChatter_Regression`): ωs = 0.01, h = 1 ms. The estimate calls h unstable and the held arm's speed grows above 1e-3 rad/s.
-- The estimate is a local, linear one at rest. Controller gains add damping and stiffness, and a large Kd can lower the limit again; T07 should pass its derivative gains as `extraDamping`.
+- The estimate is a local, linear one at rest. ~~Controller gains add damping and stiffness, and a large Kd can lower the limit again; T07 should pass its derivative gains as `extraDamping`.~~ Corrected in T07 (D6): u is held over each step, so controller gains never enter the RK4 limit; they decide the stability of the sampled loop instead.
 - Steps up to 5 ms remain allowed, so the warning in the UI is needed.
 
-**Limitations.** The estimate is evaluated at one pose q. M(q) changes along a trajectory (m11 shrinks when the arm folds towards the base axis), so a step that is stable at the start pose can be too large later in the run. It ignores stiffness: a controller's Kp and the gravity gradient ∂g/∂q are left out, so it models only the damped velocity modes (with no damping at all it returns +∞, although undamped oscillating modes still limit h). It also treats extra damping as continuous damping inside the RK4 stages, while a sampled controller (SPEC §6.3) holds its torque for Ts, which is a discrete-time loop with its own limit. T07 will extend the estimate to the linearised closed loop (the 2n×2n matrix with M⁻¹K and M⁻¹D, and the sampled controller). Friction is now per joint (D5): d_i = fv,i + fc,i/ωs,i.
+**Limitations** (corrected in T07). The estimate is evaluated at one pose q. M(q) changes along a trajectory (m11 shrinks when the arm folds towards the base axis), so a step that is stable at the start pose can be too large later in the run. It ignores the gravity gradient ∂g/∂q, so it models only the damped velocity modes (with no damping at all it returns +∞, although undamped oscillating modes still limit h). Controller gains are not a limitation of this estimate: the solver holds u constant over each step, and a sampled controller holds it over Ts ≥ h, so in the RK4 stages the controller is a constant input and the step-size limit depends on the plant's inertia and friction only. ~~It also treats extra damping as continuous damping inside the RK4 stages … T07 will extend the estimate to the linearised closed loop.~~ The gains decide a different stability, that of the sampled closed loop, which T07 computes separately (`SampledLoopStability`, D6). Friction is now per joint (D5): d_i = fv,i + fc,i/ωs,i.
 
 ---
 
@@ -130,3 +130,55 @@ Predicted limit 2.78/λmax with ωs = 0.01, unloaded: 0.164 ms at q = 0, 0.165�
 - Exception messages in `BodyParameters`, `JointDefinition` and `Planet` format numbers without `CultureInfo.InvariantCulture` (style).
 - V8 and the C·q̇ test do not test C(q, q̇)·w for w ≠ q̇; needed only if the optional Slotine–Li controller is built.
 - `WithPayload` for non-planar bodies (general 3D parallel-axis combination) and fixed joint-frame rotations beyond the three elementary axes, for T14 if a real 6-DOF arm is added.
+
+---
+
+## D6 – Anti-windup without reading the plant, and the two kinds of stability
+
+**Context.** SPEC §5.6 says a controller never reads the true plant, but SPEC §7 said the PID stops integrating "while the plant reports saturation", and T07's prompt asked for the plant's saturation flags to be passed into the PID. Separately, the step-size paragraph of SPEC §6.2 and D3 (written in T05) said the controller's derivative gains enter the RK4 limit.
+
+**Decision 1: anti-windup from the controller's own model.**
+
+- Every controller knows τmax from its own model (its belief, `ControllerBelief`), clamps its output to ±τmax and records which joints it clamped (`IController.Clamped`, an output for logging). Nothing about saturation goes into a controller.
+- PID anti-windup is conditional integration: at each sample the candidate integral Ii + ei·Δt is formed and the output computed with it; if that output exceeds ±τmax, it is clamped and the old integral is kept for that joint, otherwise the candidate is kept.
+- With an exact belief the plant never saturates, because the command never exceeds the true τmax. The plant still reports saturation (SPEC §5.4) for the case where the belief's τmax is wrong. The control loop records both.
+
+**Why.** The controller is the part that would run on the real arm. On the real arm it would not get a saturation flag from the physics either, only its own knowledge of the motor's limit. Reading the plant would also make a mismatch experiment (wrong τmax in the belief) impossible to express.
+
+**Decision 2: two kinds of stability, kept apart.**
+
+1. *RK4 step size* (SPEC §6.2, `StabilityEstimate`). The solver holds u over each step h, and the controller holds it over Ts ≥ h. Inside the RK4 stages the controller is a constant input, so the step-size limit h·λmax(M⁻¹D) < 2.78 depends on the plant's inertia and friction only. Controller gains, Kd included, do not enter it. SPEC §6.2 and D3 were corrected.
+2. *Sampled closed loop* (SPEC §6.3, `SampledLoopStability`). The gains act on samples that are held for Ts, so the loop is a discrete-time system x_{k+1} = (Φ − ΓK) x_k. The plant is linearised at rest at a pose q0 (A = [[0, I], [−M⁻¹G, −M⁻¹D]], B = [[0], [M⁻¹]], G = ∂g/∂q by central differences). Φ and Γ come from integrating the linear system over Ts with RK4 sub-steps from the unit columns (at least 200 per Ts, more if Ts·‖A‖∞ needs it), so no package and no matrix exponential are needed. Each controller supplies its effective K (`ILinearisableController`, SPEC §7): PID [Kp | Kd] (integral left out, gravity uncompensated), PDG [Kp − Ĝ | Kd], CT [P Kp − Ĝ | P Kd − Ĝ Ts/2 − D̂] with P = M̂ + Ĝ Ts²/8 + D̂ Ts/2 (D7). Ĝ and D̂ are in K because they are computed from the sample and held.
+
+**Spectral radius without an eigen solver.** ρ = lim ‖P^m‖^{1/m} with m = 2^k by repeated squaring. P^(2^k) is kept as e^{L_k}·B_k with ‖B_k‖∞ = 1 (B_{k+1} = B_k²/s, L_{k+1} = 2L_k + ln s), so nothing overflows, and ln ρ ≈ L_k/2^k. The error is about ln(C)/2^k, where C measures how far P is from normal. The conductor suggested k up to about 12, but that leaves about 1e-4: for the 1-DOF test, 12 squarings give an error of 1.1e-4, more than the 1e-6 the test asks for. The loop therefore continues until two estimates differ by less than 1e-14 (at most 60 squarings), which gives 5e-15 on the same example. Rounding is harmless: the 2^k-th root divides the accumulated error by 2^k. MaxStableTs is the first Ts where ρ reaches 1, found by doubling from 0.1 ms and then bisection to 1e-4 relative.
+
+**Results** (SPEC §7 has the tables). With the default gains at Ts = 2 ms, ρ < 1 for PDG and CT on every planet × payload (0, 0.5 kg) at three poses: ρ = 0.9845–0.9945 for PDG and 0.9785–0.9818 for CT. MaxStableTs is 6.5–29.5 ms for PDG and 80.7–86.2 ms for CT. The smallest value, 6.5 ms, is set by the yaw joint at pose A, where m11 = 8.1e-4 kg·m² (halving its Kd raises it to 8.3 ms). The PID's PD part is unstable at any Ts in one case, HighG with 0.5 kg leaning back (pose A): there Kp = 6 N·m/rad is smaller than the destabilising gravity gradient, and only gravity compensation helps. The prediction agrees with the nonlinear simulation: holding pose B from a 1e-4 rad offset, at 1.1 × MaxStableTs the error grows until a joint limit or the floor stops the run (ρ = 1.09–1.27); at 0.9 × it decays by 1e-3 or more (ρ = 0.74–0.92).
+
+**Consequences.**
+
+- `ILinearisableController.LinearFeedbackGain(q0, Ts, K)` takes Ts because the CT law with prediction depends on it. `MaxStableSamplePeriod` has an overload that recomputes K for each Ts it tries.
+- The analysis is local (one pose, at rest, no saturation, no quantisation), like the step-size estimate. The UI can show both limits: h against `StabilityEstimate.MaxStableStep`, and Ts against `SampledLoopStability.MaxStableSamplePeriod`.
+- SPEC §11 V19 says "the hold test reports saturation". With Decision 1 and an exact belief, the PDG controller clamps, so the plant never saturates. When V19 is written it should check the controller's clamping, or use a belief with a larger τmax.
+
+---
+
+## D7 – Computed torque: friction in the model, and half-sample prediction
+
+**Context.** SPEC §7's CT law u = M̂(q)(q̈_d + Kd ė + Kp e) + ĥ(q, q̇) did not meet V18 (track a quintic to 1e-3 rad with the exact model) or the settling criterion with this arm at Ts = 2 ms. T07 found two causes, both on the light wrist (M44 ≈ 3.7e-4 kg·m²).
+
+1. *Friction left in the loop.* With ĥ = Cq̇ + g only, the smoothed friction stays in the plant. Near rest it is damping d = fv + fc/ωs = 0.21 N·m·s/rad, and d/M44 ≈ 570 1/s swamps Kd. The designed loop ë + Kd ė + Kp e = 0 becomes a creeping mode with a time constant of seconds: the step still had 0.33–0.39 rad of error after 2 s. Feeding friction forward on q̇_d instead of q̇ tracks well, but it leaves the same creep at the end of every move.
+2. *The held torque goes stale.* u is held for Ts = 2 ms, but the torque the model asks for changes during the hold. The wrist's gravity torque depends on θ4 = q2 + q3 + q4, which turns at 2–3 rad/s during the quintic, and its friction changes within M44/d = 1.8 ms. With friction compensated at the measured speed, the V18 error was 4.9e-3 rad. Without friction at all it was still 1.8e-3 rad, which identified gravity as the main part. Raising Kp to 400 1/s² gave 2.6e-3 rad and saturated on the criterion step.
+
+**Decision.**
+
+- CT includes the belief's friction τ̂f (SPEC §5.4) in the terms it cancels. The full model is then M̂ q̈ + ĥ + τ̂f.
+- CT evaluates the model at the state predicted for the middle of the hold. With a = q̈_d + Kd ė + Kp e and Δt the time since the previous sample (0 at the first sample after a reset): q̄ = q + q̇·Δt/2 + a·Δt²/8 and q̄̇ = q̇ + a·Δt/2, and u = M̂(q̄) a + ĥ(q̄, q̄̇) + τ̂f(q̄̇). The prediction is an option (`predictHalfSample`, on by default); off gives the textbook law, so the lab can show the difference.
+
+**Result.** On the first V18 path (A → B of SPEC §7) the exact model gave 5.5e-4 rad without payload and 1.0e-4 rad with 0.3 kg; the textbook law gave 4.9e-3 rad. A forgotten 0.3 kg dropped the arm to the floor there, so V18 now uses a path that stays high: [0, −0.4, −0.3, 1.1] → [0, 0.1, −0.8, 0.6] rad, with the tool at least 0.218 m up. Max errors there, with the mid-hold law and with the textbook law: (a) exact model 3.9e-4 and 3.4e-3 rad; (b) plant 0.3 kg, belief 0 kg: 1.12 and 1.13 rad; (c) plant 0 kg, belief 0.3 kg: 0.65 and 0.67 rad. None of them faults. In (b) the wrist sags until it nearly hangs, because CT's wrist stiffness with a 0 kg belief is only M̂44·Kp ≈ 0.05 N·m/rad. The gains could stay at ωn = 12 rad/s, ζ = 1 (Kp = 144 1/s², Kd = 24 1/s, peak 1.9 N·m on the criterion step). Exactly averaging the friction over the hold, assuming linear speed, gave the same numbers as the midpoint, so the simpler midpoint is used.
+
+**Consequences.**
+
+- The effective gain K of CT depends on Ts (D6). The finite-difference test of the law covers it at Ts = 2 ms and 30 ms.
+- The friction cancellation needs a speed estimate better than the friction band ωs = 0.1 rad/s. The unfiltered encoder speed moves in steps of 0.77 rad/s (one count per 2 ms), so with it the wrist creeps again: 15 counts of error after 3 s (kept as a regression test). With the first-order filter at τ = 5 ms the step ends within 0.1 count. PDG and PID do not have this problem: they end within 0.3 count with or without the filter.
+- CT's stiffness is M̂·Kp, so the wrist is soft: about 0.05 N·m/rad. A wrong payload in the belief therefore shows up mostly as a wrist error.
+

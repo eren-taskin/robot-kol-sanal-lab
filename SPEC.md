@@ -271,14 +271,24 @@ The plant uses the true parameters. Every model-based controller holds its own c
 - No allocations inside `Step`. Work arrays are created once.
 - Euler is also provided, for the teaching comparison of Note 1.
 
-**Step-size stability.** Near rest, friction acts like damping with coefficient d = fv + fc/ωs on each joint (the slope of §5.4 at q̇ = 0). RK4 is stable only if h·λmax < 2.78, where λmax is the largest eigenvalue of M(q)⁻¹·D and D = diag(d) (later also plus the controller's derivative gains). Above this limit a held arm chatters instead of staying still. With the defaults of §3.3 the limit is above 1 ms in every pose inside the limits; with ωs = 0.01 rad/s it was about 0.17 ms. The core provides the estimate (`StabilityEstimate.MaxStableStep`), and the UI shows a warning when the chosen h exceeds it.
+**Step-size stability.** Near rest, friction acts like damping with coefficient d = fv + fc/ωs on each joint (the slope of §5.4 at q̇ = 0). RK4 is stable only if h·λmax < 2.78, where λmax is the largest eigenvalue of M(q)⁻¹·D and D = diag(d). Above this limit a held arm chatters instead of staying still. Controller gains do not enter this limit: u is held constant over each step (and over each controller sample Ts ≥ h), so inside the RK4 stages the controller is a constant input and the limit depends only on the plant's inertia and friction. (Corrected in T07; the gains decide a different stability, that of the sampled closed loop, §6.3.) With the defaults of §3.3 the limit is above 1 ms in every pose inside the limits; with ωs = 0.01 rad/s it was about 0.17 ms. The core provides the estimate (`StabilityEstimate.MaxStableStep`), and the UI shows a warning when the chosen h exceeds it.
 
 ### 6.3 Sampled control (software in the loop)
 
-- The controller runs every Ts (default 2 ms), which must be an integer multiple of h.
-- Between controller updates the torque command is held.
-- Sensors: joint angles quantised to the encoder resolution (2π/4096). Joint speeds estimated by backward difference of the quantised angles, optionally low-pass filtered. A "perfect sensor" option exists for comparison.
-- Optional measurement noise with a seeded random generator, so that runs are repeatable.
+- The controller runs every Ts (default 2 ms), which must be an integer multiple of h (to 1e-9 relative; otherwise the control loop throws). Sample k is at t_k = k·Ts: the sensor measures the true state, the reference is evaluated, the controller computes u.
+- Between controller updates the torque command is held: the plant runs Ts/h steps with the same u (zero-order hold).
+- Sensors, with the encoder resolution r = 2π/4096 = 1.53e-3 rad of each joint (§3.3):
+  - Encoder: measured angle q_m = r·round((q + n)/r). Speed by backward difference of the quantised angles over the sample, v = (q_m,k − q_m,k−1)/Δt (0 at the first sample), optionally low-pass filtered: y ← y + α(v − y), α = Δt/(τ + Δt). Unfiltered, the estimate moves in steps of one count per sample, r/Ts = 0.77 rad/s at Ts = 2 ms, and differs from the true average speed over the sample by at most r/Ts.
+  - Perfect sensor: the true q and q̇, for comparison.
+- Optional measurement noise n ~ N(0, σ²) on each angle, from a seeded random generator, so that runs are repeatable.
+
+**Sampled closed-loop stability.** A second kind of stability, separate from the step-size limit of §6.2: the controller's gains act on samples held for Ts, so the loop is a discrete-time system with its own limit on Ts. Linearise the plant at rest at a pose q0 for a given planet and payload, x = [δq; δq̇]:
+
+```
+A = [[0, I], [−M⁻¹G, −M⁻¹D]],   B = [[0], [M⁻¹]]
+```
+
+with M = M(q0), G = ∂g/∂q at q0 (central differences of the bias torque with q̇ = 0) and D = diag(fv + fc/ωs). Discretise with zero-order hold over Ts: Φ = e^{A·Ts} and Γ = ∫₀^Ts e^{Aτ}dτ·B, both by integrating the linear system with RK4 sub-steps (at least 200 per Ts) from the unit columns, no matrix exponential. A controller linearised at rest is u_k = −K x_k with the effective gains K of §7, so x_{k+1} = (Φ − ΓK) x_k, stable when the spectral radius ρ(Φ − ΓK) < 1. ρ is found without an eigen solver by Gelfand's formula ρ = lim ‖P^m‖^{1/m}, m = 2^k, by repeated squaring with rescaling until the estimate stops changing (about 1e-13; 12 squarings leave errors of about 1e-4). MaxStableTs is the first Ts at which ρ reaches 1, found by doubling and bisection. The core provides both (`SampledLoopStability`). The analysis is local: one pose, at rest, no saturation, no quantisation. The results for the default gains are in §7.
 
 ### 6.4 Faults
 
@@ -290,18 +300,61 @@ A fault state stops the experiment and shows why:
 
 ## 7. Controllers
 
-All controllers implement one interface: given time, measured q and q̇, and the reference (q_d, q̇_d, q̈_d), return u (4 torques). A controller never reads the true plant.
+All controllers implement one interface: given time, measured q and q̇, and the reference (q_d, q̇_d, q̈_d), return u (4 torques). A controller never reads the true plant. It knows τmax from its own model (its belief, §5.6), clamps its own output to ±τmax and reports which joints it clamped (an output, for logging). It is never told whether the plant saturated.
 
 | Key | Controller | Law |
 |---|---|---|
-| PID | Independent-joint PID | ui = Kp,i ei + Ki,i ∫ei + Kd,i ėi, with anti-windup (integration stops while the plant reports saturation on that joint) |
-| PDG | PD + gravity compensation | u = Kp e + Kd ė + ĝ(q) |
-| CT | Computed torque | u = M̂(q)(q̈_d + Kd ė + Kp e) + ĥ(q, q̇) |
+| PID | Independent-joint PID | ui = Kp,i ei + Ki,i ∫ei dt + Kd,i ėi, clamped to ±τmax,i. Anti-windup by conditional integration: on a joint whose output it clamped, the controller keeps the old integral for that sample. The integral is a rectangle sum over the time between samples (nothing at the first sample). No gravity model. |
+| PDG | PD + gravity compensation | u = Kp e + Kd ė + ĝ(q), clamped |
+| CT | Computed torque | u = M̂(q̄)(q̈_d + Kd ė + Kp e) + ĥ(q̄, q̄̇) + τ̂f(q̄̇), clamped. τ̂f is the friction of §5.4 with the belief's parameters. (q̄, q̄̇) is the measured state predicted to the middle of the hold: with a = q̈_d + Kd ė + Kp e and Δt the time since the previous sample, q̄ = q + q̇·Δt/2 + a·Δt²/8, q̄̇ = q̇ + a·Δt/2. The prediction is an option, on by default; without it q̄ = q and q̄̇ = q̇, the textbook law. |
 | ADP | Adaptive (Slotine–Li), optional | estimates the payload mass online |
 
-e = q_d − q. Hats mean the controller's own model (Section 5.6).
+e = q_d − q and ė = q̇_d − q̇ with the measured q and q̇. Hats mean the controller's own model (Section 5.6). Gains are per joint (diagonal matrices).
 
-Default gains are found in task T07 so that, on Earth with no payload, a 0.5 rad step on each pitch joint settles within 1 s without saturation, and are written here.
+Linearised at rest at q0 with the constant reference q_d = q0 (used by §6.3), each law is a PD-type feedback δu = −K [δq; δq̇], with Ĝ = ∂ĝ/∂q and D̂ = diag(fv + fc/ωs) of the belief:
+
+- PID: K = [Kp | Kd]. The integral is left out; gravity is not compensated, so G stays in the plant.
+- PDG: K = [Kp − Ĝ | Kd]. ĝ is computed from the sample and held, so Ĝ belongs to the sampled feedback.
+- CT: K = [P Kp − Ĝ | P Kd − Ĝ·Ts/2 − D̂] with P = M̂ + Ĝ·Ts²/8 + D̂·Ts/2 (Ts = 0 without the prediction).
+
+**Criterion for the default gains.** On Earth with no payload, exact belief, perfect sensor, default h and Ts: from rest at A = [0, −0.6, −0.3, −0.3] rad to the set point B = A + [0, 0.5, 0.5, 0.5] rad, and from B back to A, every joint stays within 0.01 rad (2 % of the step) of the set point from at most 1 s on, and the controller never clamps its output (so the plant never saturates). The tool is 0.39 m above the floor at A and 0.14 m at B. A PD-type law starts with |u| = Kp·0.5 + |ĝ|, so Kp·0.5 must stay well below 4.1 N·m.
+
+**Default gains** (found in T07):
+
+| Gain | Joint 1 | Joint 2 | Joint 3 | Joint 4 | Unit |
+|---|---|---|---|---|---|
+| PDG and PID Kp | 6 | 6 | 6 | 2 | N·m/rad |
+| PDG and PID Kd | 0.3 | 0.6 | 0.3 | 0.05 | N·m·s/rad |
+| PID Ki | 5 | 20 | 20 | 8 | N·m/(rad·s) |
+| CT Kp | 144 | 144 | 144 | 144 | 1/s² (ωn = 12 rad/s) |
+| CT Kd | 24 | 24 | 24 | 24 | 1/s (ζ = 1) |
+
+**Measured with these gains** (T07; perfect sensor, default h = 0.5 ms and Ts = 2 ms). Settling time in s for A→B / B→A; C = the controller clamped its output; F = fault (§6.4); ">2" = not settled after 2 s.
+
+| Planet | Payload | PID | PDG | CT |
+|---|---|---|---|---|
+| Earth | 0 | 0.83 / 0.75 | 0.29 / 0.33 | 0.49 / 0.49 |
+| Earth | 0.5 kg | F floor / >2 C | 1.68 / 1.97 C | 0.58 C / F limit j4 |
+| Moon | 0 | 0.83 / 0.79 | 0.29 / 0.33 | 0.49 / 0.49 |
+| Moon | 0.5 kg | F floor / >2 | 1.68 / 1.96 | 0.64 C / 0.63 C |
+| Mars | 0 | 0.83 / 0.78 | 0.29 / 0.33 | 0.49 / 0.49 |
+| Mars | 0.5 kg | F floor / >2 | 1.68 / 1.96 | 0.62 C / 0.69 C |
+| HighG | 0 | 1.14 / 1.20 | 0.29 / 0.33 | 0.49 / 0.49 |
+| HighG | 0.5 kg | F floor / F floor | F floor / F floor | F limit j4 / F limit j4 |
+| Orbit | 0 | 0.83 / 0.81 | 0.29 / 0.33 | 0.49 / 0.49 |
+| Orbit | 0.5 kg | F floor / >2 | 1.68 / 1.96 | 0.65 C / 0.57 C |
+
+Peak |u| on Earth without payload: PID 3.70, PDG 3.58, CT 1.92 N·m. With 0.5 kg the PID's integral winds up during the slow rise and overshoots into the floor even in orbit; CT clamps joints 2 and 3 while the light wrist is not clamped, which breaks the decoupling and throws the wrist into its limit.
+
+Sampled-loop stability (§6.3) at the poses A, B and C = [0.5, −1.0, 0.3, 0.7], every planet, 0 and 0.5 kg:
+
+| Controller | ρ at Ts = 2 ms | MaxStableTs |
+|---|---|---|
+| PID (PD part) | 0.9845–0.9944 | 6.5–29.7 ms; HighG, 0.5 kg, pose A: unstable at any Ts (ρ = 1.008), Kp cannot hold the gravity gradient |
+| PDG | 0.9845–0.9945 | 6.5–29.5 ms |
+| CT | 0.9785–0.9818 | 80.7–86.2 ms |
+
+The smallest MaxStableTs, 6.5 ms at pose A without payload, is set by the yaw joint, whose inertia m11 = 8.1e-4 kg·m² is small when the arm leans back over the base. ρ close to 1 at 2 ms means slow modes, not a stability problem: ρ = e^{−σ·Ts} with σ ≈ 3–11 1/s, the decay rate of the slowest mode.
 
 ## 8. References, tasks and scenarios
 
@@ -361,11 +414,24 @@ Each item is an automated test in `RobotArm.Tests`. Tolerances in brackets.
 | V13 | Statics: τ = g(q) holds the arm still for 1 s on every planet, payload 0 and 0.5 kg, default friction, default h (max |q̇| < 1e-9) | report §3.7 |
 | V14 | Payload combination: total mass, combined centre of mass and inertia match a hand calculation; `poses` with `payload_kg = 0.5` match | §5.5 |
 | V15 | Saturation: commanded 10 N·m is applied as 4.1 N·m and flagged | §5.4 |
-| V16 | Determinism: same scenario and seed give identical logs | §8.3 |
-| V17 | PDG, Earth, no payload: reaches a 0.5 rad step with final error < 1e-3 rad | §7 |
-| V18 | CT with the exact model tracks a quintic with max error < 1e-3 rad; with the payload model wrong by 0.3 kg the error is larger | §7 |
+| V16 | Determinism: same scenario and seed give identical logs (T07: the control loop with encoder noise and filter gives bit-identical logs with the same seed, different ones with another seed; T08 adds the scenario) | §8.3 |
+| V17 | PDG, Earth, no payload, perfect sensor: the 0.5 rad step A → B of §7 ends with final error < 1e-3 rad | §7 |
+| V18 | CT (default gains and prediction), perfect sensor, quintic [0, −0.4, −0.3, 1.1] → [0, 0.1, −0.8, 0.6] rad in 1 s, held to 1.5 s (tool at least 0.15 m above the floor and inside the joint limits along the path): (a) exact model, max error < 1e-3 rad; (b) plant 0.3 kg, belief 0 kg and (c) plant 0 kg, belief 0.3 kg, max error at least 5 times (a); all three without a fault. The same runs with the textbook CT are reported | §7 |
 | V19 | HighG with 0.5 kg payload at horizontal reach: gravity torque exceeds τmax (the vectors give 6.84 N·m on joint 2), and the hold test reports saturation | §3.5 |
 
 V9 and V10 are the checks that matter most. A free arm is chaotic, so long runs are judged by conserved quantities, never by comparing trajectories.
+
+Added in T07:
+
+| # | Test | Source |
+|---|---|---|
+| V21 | Default gains meet the criterion of §7 for PID, PDG and CT (both directions) | §7 |
+| V22 | Ts not a positive integer multiple of h throws; Ts/h plant steps per sample; the command is held between samples | §6.3 |
+| V23 | Each controller clamps to τmax of its own model; PID keeps its integral on a clamped joint and integrates again once unclamped | §7 |
+| V24 | Encoder: quantisation r = 2π/4096; the §7 step ends within 2 counts (PDG and PID with and without filter, CT with τ = 5 ms); the speed estimate differs from the true average speed over the sample by at most r/Ts and reaches more than half of it (visible); the filter lowers its RMS error; the noise is seeded | §6.3 |
+| V25 | Sampled loop: Φ, Γ of a 1-DOF mass–damper–spring equal the closed form [1e-12] and ρ equals the closed form [1e-6]; the arm's A, B equal the plant's Jacobian [1e-5]; each controller's K equals −∂u/∂x of its law [1e-6] | §6.3, §7 |
+| V26 | Default gains: ρ < 1 at Ts = 2 ms and MaxStableTs > 2 ms for every planet × payload (0, 0.5 kg) × poses A, B, C (PID wherever its continuous loop is stable); on Earth without payload at A, B, C, ρ < 1 at 0.99 × and ρ > 1 at 1.01, 2 and 4 × MaxStableTs | §6.3 |
+| V27 | Prediction against simulation: holding pose B from a 1e-4 rad offset, the simulated error grows at 1.1 × MaxStableTs and decays at 0.9 × MaxStableTs (PDG 0 and 0.5 kg, CT) | §6.3 |
+| V28 | Compute, Measure and one control-loop sample allocate nothing | PROJECT §3 |
 
 Optional V20: cross-check against MuJoCo using the same URDF and the same torque input (Python, outside the C# solution).

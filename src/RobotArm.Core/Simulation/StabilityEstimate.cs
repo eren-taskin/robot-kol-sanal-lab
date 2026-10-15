@@ -20,8 +20,14 @@ namespace RobotArm.Core.Simulation;
 /// The methods allocate; they are meant for the user interface, not for once per step.
 /// </para>
 /// <para>
-/// Limitations (docs/DECISIONS.md D3): the estimate holds at one pose q only, ignores stiffness (a controller's
-/// Kp and the gravity gradient ∂g/∂q) and treats extra damping as continuous, not as sampled control.
+/// Controller gains do not enter this limit: the solver holds the input u constant over each step (and the
+/// controller holds it over Ts ≥ h), so inside the RK4 stages a controller is a constant input. Gains decide a
+/// different stability, that of the sampled closed loop (SPEC §6.3, <see cref="Control.SampledLoopStability"/>;
+/// docs/DECISIONS.md D6).
+/// </para>
+/// <para>
+/// Limitations (docs/DECISIONS.md D3): the estimate holds at one pose q only and ignores the gravity gradient
+/// ∂g/∂q, so it models only the damped velocity modes.
 /// </para>
 /// </remarks>
 public static class StabilityEstimate
@@ -39,7 +45,9 @@ public static class StabilityEstimate
     /// <param name="model">The arm, including any payload; M includes N²·Jm (SPEC §5.2).</param>
     /// <param name="q">Joint angles, rad.</param>
     /// <param name="extraDamping">
-    /// Additional damping per joint in N·m·s/rad, for example a controller's derivative gains; empty for none.
+    /// Additional continuous damping per joint in N·m·s/rad, for example physical damping that the actuator
+    /// parameters leave out; empty for none. Not a controller's derivative gains, which act through the held input
+    /// (docs/DECISIONS.md D6).
     /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="model"/> is null.</exception>
     /// <exception cref="ArgumentException">A span has the wrong length, or an angle in <paramref name="q"/> is not finite.</exception>
