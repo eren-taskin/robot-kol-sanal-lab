@@ -1,16 +1,17 @@
-﻿@inherits LayoutComponentBase
-<div class="page">
-    <div class="sidebar">
-        <NavMenu />
-    </div>
+@inherits LayoutComponentBase
 
-    <main>
-        <div class="top-row px-4">
-            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
+<div class="lab-shell">
+    <header class="lab-header">
+        <div class="lab-brand">
+            <strong>KON 445E — 4-DOF Robot Kol Sanal Laboratuvarı</strong>
+            <span class="lab-subtitle">ROBOTIS OpenMANIPULATOR-X · Kontrol ve Dinamik Simülasyonu</span>
         </div>
+        <div class="lab-meta">
+            <span>İTÜ · Güz 2026</span>
+        </div>
+    </header>
 
-        <article class="content px-4">
-            @Body
-        </article>
+    <main class="lab-main">
+        @Body
     </main>
 </div>

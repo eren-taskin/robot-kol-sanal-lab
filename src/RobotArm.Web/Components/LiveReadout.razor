@@ -1,0 +1,198 @@
+@namespace RobotArm.Web.Components
+
+<section class="panel-card live-readout-panel">
+    <div class="panel-header">
+        <h2>Canlı Ölçümler ve Durum</h2>
+        <span class="unit-badge">t = @LabFormat.Fixed(CurrentTime, 3) s</span>
+    </div>
+
+    @{
+        var q = CurrentQ;
+        var qDot = CurrentQDot;
+        var planar = ForwardKinematics.Planar(q);
+        var tool = ForwardKinematics.ClosedForm(q).Position;
+        var refTool = LatestRow is LogRow rRow ? rRow.ReferenceTool : tool;
+        var target = new Vector3d(State.TargetMeters[0], State.TargetMeters[1], State.TargetMeters[2]);
+        var instToolErrorMm = (tool - refTool).Length * 1000.0;
+        var targetDistMm = (tool - target).Length * 1000.0;
+    }
+
+    <!-- 1. Görev ve Uç Nokta Bilgileri -->
+    <div class="readout-section">
+        <div class="group-title">Görev ve Uç Nokta</div>
+        <div class="kv-grid">
+            <div class="kv-item">
+                <span class="kv-label">Görev Evresi</span>
+                <strong id="task-phase-readout" class="kv-value">@PhaseText</strong>
+            </div>
+            <div class="kv-item">
+                <span class="kv-label">Örnek Sayısı</span>
+                <strong class="kv-value">@SampleCount</strong>
+            </div>
+            <div class="kv-item">
+                <span class="kv-label">Gerçek Yük</span>
+                <strong class="kv-value">@LabFormat.Fixed(TruePayloadKg, 2) kg @(PayloadAttached ? "(Bağlı)" : "(Ayrık)")</strong>
+            </div>
+            <div class="kv-item">
+                <span class="kv-label">İnanılan Yük</span>
+                <strong class="kv-value">@LabFormat.Fixed(BelievedPayloadKg, 2) kg</strong>
+            </div>
+            <div class="kv-item">
+                <span class="kv-label">Uç Konum X, Y, Z</span>
+                <strong class="kv-value">@LabFormat.Fixed(tool.X * 1000, 1), @LabFormat.Fixed(tool.Y * 1000, 1), @LabFormat.Fixed(tool.Z * 1000, 1) mm</strong>
+            </div>
+            <div class="kv-item">
+                <span class="kv-label">Düzlemsel r, z ve ψ</span>
+                <strong class="kv-value">r=@LabFormat.Fixed(planar.R * 1000, 1) mm, z=@LabFormat.Fixed(planar.Z * 1000, 1) mm, ψ=@LabFormat.Fixed(planar.Pitch, 3) rad</strong>
+            </div>
+            <div class="kv-item">
+                <span class="kv-label">Anlık Yörünge Hatası</span>
+                <strong class="kv-value">@LabFormat.Fixed(instToolErrorMm, 2) mm</strong>
+            </div>
+            <div class="kv-item">
+                <span class="kv-label">Hedefe Uzaklık</span>
+                <strong class="kv-value">@LabFormat.Fixed(targetDistMm, 2) mm</strong>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. Eklem Açıları, Hızları ve Torkları -->
+    <div class="readout-section">
+        <div class="group-title">Eklem Durumları (q, qd, e, q̇, u, τ)</div>
+        <table class="readout-table">
+            <thead>
+                <tr>
+                    <th>Eklem</th>
+                    <th>q <small>(rad)</small></th>
+                    <th>qd <small>(rad)</small></th>
+                    <th>e <small>(rad)</small></th>
+                    <th>q̇ <small>(rad/s)</small></th>
+                    <th>u <small>(N·m)</small></th>
+                    <th>τ <small>(N·m)</small></th>
+                    <th>Durum</th>
+                </tr>
+            </thead>
+            <tbody>
+                @for (var i = 0; i < 4; i++)
+                {
+                    var qi = q[i];
+                    var qdi = LatestRow is LogRow row ? row.Reference[i] : qi;
+                    var ei = qdi - qi;
+                    var qdoti = qDot[i];
+                    var ui = LatestRow is LogRow rowU ? rowU.Command[i] : 0.0;
+                    var taui = LatestRow is LogRow rowT ? rowT.AppliedTorque[i] : 0.0;
+                    var clamped = LatestRow is LogRow rowC && (rowC.ClampedMask & (1 << i)) != 0;
+                    var saturated = LatestRow is LogRow rowS && (rowS.SaturatedMask & (1 << i)) != 0;
+                    <tr>
+                        <td class="joint-col">E@(i + 1)</td>
+                        <td class="mono-cell">@LabFormat.Fixed(qi, 3)</td>
+                        <td class="mono-cell">@LabFormat.Fixed(qdi, 3)</td>
+                        <td class="mono-cell">@LabFormat.Fixed(ei, 4)</td>
+                        <td class="mono-cell">@LabFormat.Fixed(qdoti, 3)</td>
+                        <td class="mono-cell">@LabFormat.Fixed(ui, 2)</td>
+                        <td class="mono-cell">@LabFormat.Fixed(taui, 2)</td>
+                        <td>
+                            @if (saturated)
+                            {
+                                <span class="badge-mini badge-danger">Doyum</span>
+                            }
+                            else if (clamped)
+                            {
+                                <span class="badge-mini badge-warning">Kırpıldı</span>
+                            }
+                            else
+                            {
+                                <span class="badge-mini badge-ok">Normal</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <!-- 3. Tamamlanan Koşu Özeti (Varsa) -->
+    @if (Result is not null)
+    {
+        var m = Result.Metrics;
+        <div class="readout-section">
+            <div class="group-title">Deney Sonuç Metrikleri</div>
+            <div class="kv-grid">
+                <div class="kv-item">
+                    <span class="kv-label">Sonuç</span>
+                    <strong class="kv-value @(Result.Success ? "text-ok" : "text-danger")">
+                        @(Result.Success ? "Başarılı" : "Başarısız")
+                    </strong>
+                </div>
+                <div class="kv-item">
+                    <span class="kv-label">Yerleşme Süresi</span>
+                    <strong class="kv-value">
+                        @(m.SettlingTime is double st ? $"{LabFormat.Fixed(st, 3)} s" : "Yerleşmedi")
+                    </strong>
+                </div>
+                <div class="kv-item">
+                    <span class="kv-label">RMS / Maks Uç Hatası</span>
+                    <strong class="kv-value">@LabFormat.Fixed(m.RmsToolError * 1000, 2) / @LabFormat.Fixed(m.MaxToolError * 1000, 2) mm</strong>
+                </div>
+                <div class="kv-item">
+                    <span class="kv-label">Son Uç Hatası / Aşım</span>
+                    <strong class="kv-value">@LabFormat.Fixed(m.FinalToolError * 1000, 2) / @LabFormat.Fixed(m.Overshoot * 1000, 2) mm</strong>
+                </div>
+                <div class="kv-item">
+                    <span class="kv-label">Tepe Tork |τ| (E1..E4)</span>
+                    <strong class="kv-value">
+                        @LabFormat.Fixed(m.PeakTorque[0], 2) · @LabFormat.Fixed(m.PeakTorque[1], 2) · @LabFormat.Fixed(m.PeakTorque[2], 2) · @LabFormat.Fixed(m.PeakTorque[3], 2) N·m
+                    </strong>
+                </div>
+                <div class="kv-item">
+                    <span class="kv-label">Kırpma Oranı / Enerji</span>
+                    <strong class="kv-value">%@LabFormat.Fixed(m.AnyClampedPercent, 1) · @LabFormat.Fixed(m.MechanicalEnergy, 3) J</strong>
+                </div>
+            </div>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public LabState State { get; set; } = null!;
+    [Parameter] public ExperimentSnapshot? Snapshot { get; set; }
+    [Parameter] public LogRow? LatestRow { get; set; }
+    [Parameter] public RunResult? Result { get; set; }
+
+    private double CurrentTime => Snapshot?.Time ?? 0.0;
+    private int SampleCount => Snapshot?.SampleCount ?? 0;
+    private string PhaseText => Snapshot is ExperimentSnapshot s
+        ? TranslatePhase(s.Phase)
+        : "Hazır";
+
+    private double[] CurrentQ => Snapshot is ExperimentSnapshot s
+        ? s.Q.ToArray()
+        : State.StartQ.Select(v => double.IsFinite(v) ? v : 0.0).ToArray();
+
+    private double[] CurrentQDot => Snapshot is ExperimentSnapshot s
+        ? s.QDot.ToArray()
+        : [0.0, 0.0, 0.0, 0.0];
+
+    private bool PayloadAttached => Snapshot is ExperimentSnapshot s
+        ? s.PayloadAttached
+        : (State.TaskKind != TaskKind.PickPlace && State.PayloadKg > 0);
+
+    private double TruePayloadKg => Snapshot is ExperimentSnapshot s
+        ? s.PayloadKg
+        : (State.TaskKind == TaskKind.PickPlace ? 0.0 : Math.Max(0.0, State.PayloadKg));
+
+    private double BelievedPayloadKg => LatestRow is LogRow row
+        ? row.BeliefPayloadKg
+        : (State.UseBeliefPayloadOverride ? State.BeliefPayloadKg : TruePayloadKg);
+
+    private static string TranslatePhase(TaskPhase phase) => phase switch
+    {
+        TaskPhase.Moving => "Hareket Ediyor",
+        TaskPhase.Picking => "Yakalama Bekleniyor",
+        TaskPhase.Carrying => "Yük Taşınıyor",
+        TaskPhase.Placing => "Bırakma Bekleniyor",
+        TaskPhase.Holding => "Poz Tutuluyor",
+        TaskPhase.Released => "Nesne Bırakıldı",
+        _ => phase.ToString()
+    };
+}

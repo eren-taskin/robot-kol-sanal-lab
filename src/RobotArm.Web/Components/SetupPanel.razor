@@ -1,0 +1,726 @@
+@namespace RobotArm.Web.Components
+
+<section class="panel-card setup-panel">
+    <div class="panel-header">
+        <h2>Deney Kurulumu</h2>
+        <span class="unit-badge">mm · rad · N·m · ms</span>
+    </div>
+
+    <!-- 1. Hazır Senaryo Seçimi -->
+    <div class="setup-group">
+        <label class="field-label" for="scenario-select">Hazır Deney Senaryosu</label>
+        <select id="scenario-select" class="form-input" value="@State.SelectedLibraryName" @onchange="OnLibraryScenarioChanged">
+            @foreach (var s in ScenarioLibrary.All)
+            {
+                <option value="@s.Name">@s.Name</option>
+            }
+        </select>
+        @if (!string.IsNullOrWhiteSpace(State.Description))
+        {
+            <div class="scenario-desc">@State.Description</div>
+        }
+    </div>
+
+    <!-- 2. Gezegen ve Yük -->
+    <div class="setup-group">
+        <div class="group-title">Ortam ve Yük</div>
+        <div class="field-row two-col">
+            <div>
+                <label class="field-label" for="planet-select">Gezegen (g)</label>
+                <select id="planet-select" class="form-input" value="@State.PlanetKey" @onchange="OnPlanetChanged">
+                    @foreach (var p in Planet.All)
+                    {
+                        <option value="@p.Key">@p.DisplayName (@LabFormat.Fixed(p.G, 2) m/s²)</option>
+                    }
+                    <option value="@Planet.CustomKey">Özel (0–30 m/s²)</option>
+                </select>
+            </div>
+            <div>
+                <label class="field-label" for="payload-input">Yük Kütlesi (kg)</label>
+                <input id="payload-input" type="text" inputmode="decimal"
+                       class="form-input @(HasError("PayloadKg") ? "input-error" : "")"
+                       value="@LabFormat.Input(State.PayloadKg)"
+                       @onchange="OnPayloadChanged" />
+            </div>
+        </div>
+        @if (State.PlanetKey == Planet.CustomKey)
+        {
+            <div class="field-row">
+                <label class="field-label" for="custom-g-input">Özel Yerçekimi İvmesi g (m/s²)</label>
+                <input id="custom-g-input" type="text" inputmode="decimal"
+                       class="form-input @(HasError("CustomGravity") ? "input-error" : "")"
+                       value="@LabFormat.Input(State.CustomGravity)"
+                       @onchange="OnCustomGravityChanged" />
+                @RenderError("CustomGravity")
+            </div>
+        }
+        @RenderError("PayloadKg")
+    </div>
+
+    <!-- 3. Görev ve Hedefler -->
+    <div class="setup-group">
+        <div class="group-title">Görev ve Başlangıç Pozu</div>
+        <div class="field-row">
+            <label class="field-label" for="task-kind-select">Görev Türü</label>
+            <select id="task-kind-select" class="form-input" value="@State.TaskKind" @onchange="OnTaskKindChanged">
+                <option value="@TaskKind.Reach">Noktaya Git</option>
+                <option value="@TaskKind.PickPlace">Al ve Bırak</option>
+                <option value="@TaskKind.Track">Yörünge İzleme</option>
+                <option value="@TaskKind.Hold">Poz Tutma</option>
+            </select>
+        </div>
+
+        <label class="field-label">Başlangıç Eklem Açıları q₁..q₄ (rad)</label>
+        <div class="joint-grid">
+            @for (var i = 0; i < 4; i++)
+            {
+                var idx = i;
+                var joint = _model.Joints[idx];
+                <div class="joint-cell">
+                    <span class="joint-tag">q@(idx + 1) <small>[@LabFormat.Fixed(joint.LowerLimit, 2), @LabFormat.Fixed(joint.UpperLimit, 2)]</small></span>
+                    <input id="start-q-@idx" type="text" inputmode="decimal"
+                           class="form-input @(HasError($"StartQ_{idx}") ? "input-error" : "")"
+                           value="@LabFormat.Input(State.StartQ[idx], "G5")"
+                           @onchange="e => OnStartQChanged(idx, e)" />
+                </div>
+            }
+        </div>
+        @for (var i = 0; i < 4; i++)
+        {
+            @RenderError($"StartQ_{i}")
+        }
+        @RenderError("StartPoseFloor")
+
+        @if (State.TaskKind == TaskKind.Reach)
+        {
+            <label class="field-label">Hedef Uç Nokta X, Y, Z (mm)</label>
+            <div class="xyz-grid">
+                <div>
+                    <span class="joint-tag">X (mm)</span>
+                    <input id="target-x-mm" type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.TargetMeters[0] * 1000, "F1")"
+                           @onchange="e => OnTargetMmChanged(0, e)" />
+                </div>
+                <div>
+                    <span class="joint-tag">Y (mm)</span>
+                    <input id="target-y-mm" type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.TargetMeters[1] * 1000, "F1")"
+                           @onchange="e => OnTargetMmChanged(1, e)" />
+                </div>
+                <div>
+                    <span class="joint-tag">Z (mm)</span>
+                    <input id="target-z-mm" type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.TargetMeters[2] * 1000, "F1")"
+                           @onchange="e => OnTargetMmChanged(2, e)" />
+                </div>
+            </div>
+            <div class="field-row two-col">
+                <div>
+                    <label class="field-label" for="reach-pitch">Hedef Eğim ψ (rad)</label>
+                    <input id="reach-pitch" type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.PitchRad)"
+                           @onchange="OnPitchChanged" />
+                </div>
+                <div>
+                    <label class="field-label" for="motion-duration">Hareket Süresi (s)</label>
+                    <input id="motion-duration" type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.MotionDuration)"
+                           @onchange="OnMotionDurationChanged" />
+                </div>
+            </div>
+            @RenderError("Target")
+            @RenderError("MotionDuration")
+        }
+        else if (State.TaskKind == TaskKind.PickPlace)
+        {
+            <label class="field-label">Nesne Konumu A: X, Y, Z (mm) ve Eğim ψA (rad)</label>
+            <div class="xyz-grid four-col">
+                <div>
+                    <span class="joint-tag">X_A (mm)</span>
+                    <input type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.ObjectPositionMeters[0] * 1000, "F1")"
+                           @onchange="e => OnObjectMmChanged(0, e)" />
+                </div>
+                <div>
+                    <span class="joint-tag">Y_A (mm)</span>
+                    <input type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.ObjectPositionMeters[1] * 1000, "F1")"
+                           @onchange="e => OnObjectMmChanged(1, e)" />
+                </div>
+                <div>
+                    <span class="joint-tag">Z_A (mm)</span>
+                    <input type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.ObjectPositionMeters[2] * 1000, "F1")"
+                           @onchange="e => OnObjectMmChanged(2, e)" />
+                </div>
+                <div>
+                    <span class="joint-tag">ψ_A (rad)</span>
+                    <input type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.PickPitchRad)"
+                           @onchange="OnPickPitchChanged" />
+                </div>
+            </div>
+            @RenderError("ObjectPosition")
+
+            <label class="field-label">Bırakma Hedefi B: X, Y, Z (mm) ve Eğim ψB (rad)</label>
+            <div class="xyz-grid four-col">
+                <div>
+                    <span class="joint-tag">X_B (mm)</span>
+                    <input type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.TargetMeters[0] * 1000, "F1")"
+                           @onchange="e => OnTargetMmChanged(0, e)" />
+                </div>
+                <div>
+                    <span class="joint-tag">Y_B (mm)</span>
+                    <input type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.TargetMeters[1] * 1000, "F1")"
+                           @onchange="e => OnTargetMmChanged(1, e)" />
+                </div>
+                <div>
+                    <span class="joint-tag">Z_B (mm)</span>
+                    <input type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.TargetMeters[2] * 1000, "F1")"
+                           @onchange="e => OnTargetMmChanged(2, e)" />
+                </div>
+                <div>
+                    <span class="joint-tag">ψ_B (rad)</span>
+                    <input type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.PitchRad)"
+                           @onchange="OnPitchChanged" />
+                </div>
+            </div>
+            @RenderError("Target")
+
+            <div class="field-row two-col">
+                <div>
+                    <label class="field-label">Bacak Süresi (s)</label>
+                    <input type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.MotionDuration)"
+                           @onchange="OnMotionDurationChanged" />
+                </div>
+                <div>
+                    <label class="field-label">Yakalama Zaman Aşımı (s)</label>
+                    <input type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.EventTimeout)"
+                           @onchange="OnEventTimeoutChanged" />
+                </div>
+            </div>
+            @RenderError("MotionDuration")
+            @RenderError("EventTimeout")
+        }
+        else if (State.TaskKind == TaskKind.Track)
+        {
+            <div class="field-row two-col">
+                <div>
+                    <label class="field-label" for="track-shape-select">Yörünge Şekli</label>
+                    <select id="track-shape-select" class="form-input" value="@State.TrackShape" @onchange="OnTrackShapeChanged">
+                        <option value="@TrackShape.Circle">Yatay Çember</option>
+                        <option value="@TrackShape.Line">Doğrusal Çizgi</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="field-label">Hareket Süresi (s)</label>
+                    <input type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.MotionDuration)"
+                           @onchange="OnMotionDurationChanged" />
+                </div>
+            </div>
+            @if (State.TrackShape == TrackShape.Circle)
+            {
+                <div class="field-row two-col">
+                    <div>
+                        <label class="field-label">Çember Yarıçapı (mm)</label>
+                        <input type="text" inputmode="decimal" class="form-input"
+                               value="@LabFormat.Input(State.CircleRadiusMeters * 1000, "F1")"
+                               @onchange="OnCircleRadiusMmChanged" />
+                    </div>
+                    <div>
+                        <label class="field-label">RMS Hata Eşiği (mm)</label>
+                        <input type="text" inputmode="decimal" class="form-input"
+                               value="@LabFormat.Input(State.TrackingToleranceMeters * 1000, "F1")"
+                               @onchange="OnTrackingToleranceMmChanged" />
+                    </div>
+                </div>
+                @RenderError("CircleRadius")
+                @RenderError("TrackingTolerance")
+            }
+            else
+            {
+                <label class="field-label">Bitiş Noktası X, Y, Z (mm)</label>
+                <div class="xyz-grid">
+                    @for (var i = 0; i < 3; i++)
+                    {
+                        var axis = i;
+                        <div>
+                            <span class="joint-tag">@(_axisNames[axis]) (mm)</span>
+                            <input type="text" inputmode="decimal" class="form-input"
+                                   value="@LabFormat.Input(State.TargetMeters[axis] * 1000, "F1")"
+                                   @onchange="e => OnTargetMmChanged(axis, e)" />
+                        </div>
+                    }
+                </div>
+                @RenderError("Target")
+            }
+            @RenderError("MotionDuration")
+        }
+        else if (State.TaskKind == TaskKind.Hold)
+        {
+            <label class="field-label">Dış Bozucu Tork Darbesi τd,1..τd,4 (N·m)</label>
+            <div class="joint-grid">
+                @for (var i = 0; i < 4; i++)
+                {
+                    var idx = i;
+                    <div class="joint-cell">
+                        <span class="joint-tag">τd,@(idx + 1) (N·m)</span>
+                        <input type="text" inputmode="decimal" class="form-input"
+                               value="@LabFormat.Input(State.DisturbanceNm[idx])"
+                               @onchange="e => OnDisturbanceChanged(idx, e)" />
+                    </div>
+                }
+            </div>
+            <div class="field-row two-col">
+                <div>
+                    <label class="field-label">Darbe Başlangıcı (s)</label>
+                    <input type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.PulseStart)"
+                           @onchange="OnPulseStartChanged" />
+                </div>
+                <div>
+                    <label class="field-label">Darbe Süresi (s) (0 = kapalı)</label>
+                    <input type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.PulseDuration)"
+                           @onchange="OnPulseDurationChanged" />
+                </div>
+            </div>
+            @RenderError("PulseStart")
+            @RenderError("PulseDuration")
+        }
+    </div>
+
+    <!-- 4. Kontrolcü ve Kazançlar -->
+    <div class="setup-group">
+        <div class="group-header-row">
+            <span class="group-title">Kontrolcü ve Kazançlar</span>
+            <button type="button" class="btn-secondary-sm" @onclick="OnResetGainsClicked">Varsayılan Kazançlar</button>
+        </div>
+
+        <div class="field-row">
+            <label class="field-label" for="controller-select">Kontrol Yasası</label>
+            <select id="controller-select" class="form-input" value="@State.ControllerKey" @onchange="OnControllerChanged">
+                <option value="PID">PID (Bağımsız Eklem PID)</option>
+                <option value="PDG">PDG (PD + Yerçekimi Telafisi)</option>
+                <option value="CT">CT (Hesaplanmış Tork)</option>
+                <option value="CT+I">CT+I (İntegralli Hesaplanmış Tork)</option>
+            </select>
+        </div>
+
+        @if (State.ControlMethod == ControlMethod.CT)
+        {
+            <div class="field-row">
+                <label class="field-label" for="ct-mode-select">CT Model Değerlendirme</label>
+                <select id="ct-mode-select" class="form-input" value="@(State.PredictHalfSample ? "predict" : "textbook")" @onchange="OnCtModeChanged">
+                    <option value="predict">Örneklemeye duyarlı (orta nokta tahmini açık)</option>
+                    <option value="textbook">Ders kitabı yasası (tahminsiz, q̄ = q)</option>
+                </select>
+            </div>
+        }
+
+        <table class="gains-table">
+            <thead>
+                <tr>
+                    <th>Eklem</th>
+                    <th>Kp <small>(@KpUnit)</small></th>
+                    <th>Kd <small>(@KdUnit)</small></th>
+                    @if (ShowKi)
+                    {
+                        <th>Ki <small>(@KiUnit)</small></th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @for (var i = 0; i < 4; i++)
+                {
+                    var idx = i;
+                    <tr>
+                        <td class="joint-col">E@(idx + 1)</td>
+                        <td>
+                            <input id="gain-kp-@idx" type="text" inputmode="decimal" class="form-input gain-input"
+                                   value="@LabFormat.Input(State.Kp[idx])"
+                                   @onchange="e => OnGainChanged(0, idx, e)" />
+                        </td>
+                        <td>
+                            <input id="gain-kd-@idx" type="text" inputmode="decimal" class="form-input gain-input"
+                                   value="@LabFormat.Input(State.Kd[idx])"
+                                   @onchange="e => OnGainChanged(1, idx, e)" />
+                        </td>
+                        @if (ShowKi)
+                        {
+                            <td>
+                                <input id="gain-ki-@idx" type="text" inputmode="decimal" class="form-input gain-input"
+                                       value="@LabFormat.Input(State.Ki[idx])"
+                                       @onchange="e => OnGainChanged(2, idx, e)" />
+                            </td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+        @RenderError("Gains")
+    </div>
+
+    <!-- 5. Kontrolcü İnanç Modeli -->
+    <div class="setup-group">
+        <div class="group-title">Kontrolcü İnanç Modeli</div>
+        <div class="field-row">
+            <label class="field-label" for="belief-knowledge-select">Yük Bilgisi Politikası</label>
+            <select id="belief-knowledge-select" class="form-input" value="@State.Knowledge" @onchange="OnKnowledgeChanged">
+                <option value="@PayloadKnowledge.Informed">Bilgili (Al-bırakta yük güncellenir)</option>
+                <option value="@PayloadKnowledge.Unaware">Habersiz (Başlangıç yük inancı sabit)</option>
+            </select>
+        </div>
+
+        <div class="checkbox-row">
+            <input id="override-belief-payload" type="checkbox" checked="@State.UseBeliefPayloadOverride" @onchange="OnUseBeliefPayloadChanged" />
+            <label for="override-belief-payload">Model uyumsuzluğu için inanılan yükü elle belirle</label>
+        </div>
+        @if (State.UseBeliefPayloadOverride)
+        {
+            <div class="field-row">
+                <label class="field-label" for="belief-payload-input">İnanılan Yük Kütlesi (kg)</label>
+                <input id="belief-payload-input" type="text" inputmode="decimal"
+                       class="form-input @(HasError("BeliefPayloadKg") ? "input-error" : "")"
+                       value="@LabFormat.Input(State.BeliefPayloadKg)"
+                       @onchange="OnBeliefPayloadChanged" />
+                @RenderError("BeliefPayloadKg")
+            </div>
+        }
+    </div>
+
+    <!-- 6. Çözücü, Örnekleme ve Sensör -->
+    <div class="setup-group">
+        <div class="group-title">Çözücü, Örnekleme ve Sensör</div>
+        <div class="field-row three-col">
+            <div>
+                <label class="field-label" for="step-h-input">Adım Boyu h (ms)</label>
+                <input id="step-h-input" type="text" inputmode="decimal"
+                       class="form-input @(HasError("Step") ? "input-error" : "")"
+                       value="@LabFormat.Input(State.StepSeconds * 1000, "G5")"
+                       @onchange="OnStepMsChanged" />
+            </div>
+            <div>
+                <label class="field-label" for="sample-ts-input">Örnekleme Ts (ms)</label>
+                <input id="sample-ts-input" type="text" inputmode="decimal"
+                       class="form-input @(HasError("SamplePeriod") ? "input-error" : "")"
+                       value="@LabFormat.Input(State.SamplePeriodSeconds * 1000, "G5")"
+                       @onchange="OnSamplePeriodMsChanged" />
+            </div>
+            <div>
+                <label class="field-label" for="duration-input">Süre (s)</label>
+                <input id="duration-input" type="text" inputmode="decimal"
+                       class="form-input @(HasError("Duration") ? "input-error" : "")"
+                       value="@LabFormat.Input(State.DurationSeconds, "G5")"
+                       @onchange="OnDurationChanged" />
+            </div>
+        </div>
+        @RenderError("Step")
+        @RenderError("SamplePeriod")
+        @RenderError("Duration")
+
+        <div class="field-row">
+            <label class="field-label" for="sensor-select">Sensör Modeli</label>
+            <select id="sensor-select" class="form-input" value="@(State.UseEncoder ? "encoder" : "perfect")" @onchange="OnSensorChanged">
+                <option value="perfect">Kusursuz Sensör (Gerçek q ve q̇)</option>
+                <option value="encoder">Enkoder (4096 darbe/tur, geri fark hızı)</option>
+            </select>
+        </div>
+
+        @if (State.UseEncoder)
+        {
+            <div class="field-row three-col">
+                <div>
+                    <label class="field-label" for="filter-tau-input">Filtre τf (ms)</label>
+                    <input id="filter-tau-input" type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.FilterTimeConstantSeconds * 1000)"
+                           @onchange="OnFilterTauMsChanged" />
+                </div>
+                <div>
+                    <label class="field-label" for="noise-sigma-input">Gürültü σ (rad)</label>
+                    <input id="noise-sigma-input" type="text" inputmode="decimal" class="form-input"
+                           value="@LabFormat.Input(State.NoiseStdDevRad)"
+                           @onchange="OnNoiseStdDevChanged" />
+                </div>
+                <div>
+                    <label class="field-label" for="seed-input">Rastgelelik Tohumu</label>
+                    <input id="seed-input" type="text" inputmode="numeric" class="form-input"
+                           value="@State.Seed"
+                           @onchange="OnSeedChanged" />
+                </div>
+            </div>
+            @RenderError("FilterTimeConstant")
+            @RenderError("NoiseStdDev")
+        }
+        @RenderError("General")
+    </div>
+</section>
+
+@code {
+    private static readonly ArmModel _model = ArmModel.OpenManipulatorX();
+    private static readonly string[] _axisNames = ["X", "Y", "Z"];
+
+    [Parameter, EditorRequired] public LabState State { get; set; } = null!;
+    [Parameter] public EventCallback OnScenarioSelected { get; set; }
+    [Parameter] public EventCallback OnStateChanged { get; set; }
+
+    private bool ShowKi => State.ControlMethod == ControlMethod.PID || (State.ControlMethod == ControlMethod.CT && State.IntegralEnabled);
+    private string KpUnit => State.ControlMethod == ControlMethod.CT ? "1/s²" : "N·m/rad";
+    private string KdUnit => State.ControlMethod == ControlMethod.CT ? "1/s" : "N·m·s/rad";
+    private string KiUnit => State.ControlMethod == ControlMethod.CT ? "1/s³" : "N·m/(rad·s)";
+
+    private bool HasError(string key) => State.ValidationErrors.ContainsKey(key);
+
+    private RenderFragment RenderError(string key) => builder =>
+    {
+        if (State.ValidationErrors.TryGetValue(key, out var msg))
+        {
+            builder.OpenElement(0, "div");
+            builder.AddAttribute(1, "class", "field-error");
+            builder.AddContent(2, msg);
+            builder.CloseElement();
+        }
+    };
+
+    private async Task NotifyChanged()
+    {
+        State.RecomputeValidationAndStability();
+        await OnStateChanged.InvokeAsync();
+    }
+
+    private async Task OnLibraryScenarioChanged(ChangeEventArgs e)
+    {
+        var name = e.Value?.ToString();
+        var match = ScenarioLibrary.All.FirstOrDefault(s => s.Name == name);
+        if (match is not null)
+        {
+            State.LoadScenario(match);
+            await OnScenarioSelected.InvokeAsync();
+        }
+    }
+
+    private async Task OnPlanetChanged(ChangeEventArgs e)
+    {
+        State.PlanetKey = e.Value?.ToString() ?? Planet.Earth.Key;
+        await NotifyChanged();
+    }
+
+    private async Task OnCustomGravityChanged(ChangeEventArgs e)
+    {
+        State.CustomGravity = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnPayloadChanged(ChangeEventArgs e)
+    {
+        State.PayloadKg = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnTaskKindChanged(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<TaskKind>(e.Value?.ToString(), out var kind))
+        {
+            State.TaskKind = kind;
+            await NotifyChanged();
+        }
+    }
+
+    private async Task OnStartQChanged(int index, ChangeEventArgs e)
+    {
+        State.StartQ[index] = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnTargetMmChanged(int axis, ChangeEventArgs e)
+    {
+        State.TargetMeters[axis] = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v / 1000.0 : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnObjectMmChanged(int axis, ChangeEventArgs e)
+    {
+        State.ObjectPositionMeters[axis] = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v / 1000.0 : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnPitchChanged(ChangeEventArgs e)
+    {
+        State.PitchRad = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnPickPitchChanged(ChangeEventArgs e)
+    {
+        State.PickPitchRad = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnMotionDurationChanged(ChangeEventArgs e)
+    {
+        State.MotionDuration = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnEventTimeoutChanged(ChangeEventArgs e)
+    {
+        State.EventTimeout = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnTrackShapeChanged(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<TrackShape>(e.Value?.ToString(), out var shape))
+        {
+            State.TrackShape = shape;
+            await NotifyChanged();
+        }
+    }
+
+    private async Task OnCircleRadiusMmChanged(ChangeEventArgs e)
+    {
+        State.CircleRadiusMeters = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v / 1000.0 : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnTrackingToleranceMmChanged(ChangeEventArgs e)
+    {
+        State.TrackingToleranceMeters = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v / 1000.0 : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnDisturbanceChanged(int index, ChangeEventArgs e)
+    {
+        State.DisturbanceNm[index] = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnPulseStartChanged(ChangeEventArgs e)
+    {
+        State.PulseStart = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnPulseDurationChanged(ChangeEventArgs e)
+    {
+        State.PulseDuration = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnControllerChanged(ChangeEventArgs e)
+    {
+        var key = e.Value?.ToString() ?? "PDG";
+        State.SetControllerByKey(key, loadDefaultGains: true);
+        await OnStateChanged.InvokeAsync();
+    }
+
+    private async Task OnResetGainsClicked()
+    {
+        State.ApplyDefaultGains();
+        await NotifyChanged();
+    }
+
+    private async Task OnCtModeChanged(ChangeEventArgs e)
+    {
+        State.PredictHalfSample = e.Value?.ToString() != "textbook";
+        await NotifyChanged();
+    }
+
+    private async Task OnGainChanged(int kind, int index, ChangeEventArgs e)
+    {
+        var val = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v : double.NaN;
+        if (kind == 0) State.Kp[index] = val;
+        else if (kind == 1) State.Kd[index] = val;
+        else State.Ki[index] = val;
+        await NotifyChanged();
+    }
+
+    private async Task OnKnowledgeChanged(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<PayloadKnowledge>(e.Value?.ToString(), out var k))
+        {
+            State.Knowledge = k;
+            await NotifyChanged();
+        }
+    }
+
+    private async Task OnUseBeliefPayloadChanged(ChangeEventArgs e)
+    {
+        State.UseBeliefPayloadOverride = e.Value is bool b && b;
+        await NotifyChanged();
+    }
+
+    private async Task OnBeliefPayloadChanged(ChangeEventArgs e)
+    {
+        State.BeliefPayloadKg = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnStepMsChanged(ChangeEventArgs e)
+    {
+        if (LabFormat.TryParseInvariant(e.Value?.ToString(), out var ms))
+        {
+            State.StepSeconds = ms / 1000.0;
+            // If Duration had fractional step alignment (e.g. from scenario #8), snap Duration to an integer multiple of the new Step when Step > 0.
+            if (State.StepSeconds > 0 && double.IsFinite(State.DurationSeconds))
+            {
+                var rounded = Math.Round(State.DurationSeconds);
+                if (Math.Abs(State.DurationSeconds - rounded) > 1e-6)
+                {
+                    State.DurationSeconds = rounded;
+                }
+            }
+        }
+        else
+        {
+            State.StepSeconds = double.NaN;
+        }
+        await NotifyChanged();
+    }
+
+    private async Task OnSamplePeriodMsChanged(ChangeEventArgs e)
+    {
+        State.SamplePeriodSeconds = LabFormat.TryParseInvariant(e.Value?.ToString(), out var ms) ? ms / 1000.0 : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnDurationChanged(ChangeEventArgs e)
+    {
+        State.DurationSeconds = LabFormat.TryParseInvariant(e.Value?.ToString(), out var s) ? s : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnSensorChanged(ChangeEventArgs e)
+    {
+        State.UseEncoder = e.Value?.ToString() == "encoder";
+        await NotifyChanged();
+    }
+
+    private async Task OnFilterTauMsChanged(ChangeEventArgs e)
+    {
+        State.FilterTimeConstantSeconds = LabFormat.TryParseInvariant(e.Value?.ToString(), out var ms) ? ms / 1000.0 : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnNoiseStdDevChanged(ChangeEventArgs e)
+    {
+        State.NoiseStdDevRad = LabFormat.TryParseInvariant(e.Value?.ToString(), out var rad) ? rad : double.NaN;
+        await NotifyChanged();
+    }
+
+    private async Task OnSeedChanged(ChangeEventArgs e)
+    {
+        if (LabFormat.TryParseIntInvariant(e.Value?.ToString(), out var seed))
+        {
+            State.Seed = seed;
+            await NotifyChanged();
+        }
+    }
+}

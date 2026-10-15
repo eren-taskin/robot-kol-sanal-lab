@@ -1,0 +1,144 @@
+@namespace RobotArm.Web.Components
+
+<section class="panel-card run-controls-panel">
+    <div class="run-toolbar">
+        <div class="btn-group-run">
+            <button id="btn-start" type="button" class="btn-run btn-primary-accent"
+                    disabled="@(IsRunning || HasValidationErrors)"
+                    @onclick="OnStart">
+                ▶ @(IsPaused && !IsFinished ? "Devam" : "Başlat")
+            </button>
+            <button id="btn-pause" type="button" class="btn-run"
+                    disabled="@(!IsRunning)"
+                    @onclick="OnPause">
+                ⏸ Duraklat
+            </button>
+            <button id="btn-step" type="button" class="btn-run"
+                    disabled="@(IsRunning || HasValidationErrors || IsFinished)"
+                    @onclick="OnStep">
+                ⏭ Adım (+Ts)
+            </button>
+            <button id="btn-reset" type="button" class="btn-run"
+                    @onclick="OnReset">
+                ↺ Sıfırla
+            </button>
+        </div>
+
+        <div class="mode-toggle" role="group" aria-label="Çalıştırma Modu">
+            <button id="mode-normal-btn" type="button"
+                    class="mode-btn @(!FastMode ? "mode-active" : "")"
+                    @onclick="() => OnFastModeChanged.InvokeAsync(false)">
+                Normal (Adım Adım)
+            </button>
+            <button id="mode-fast-btn" type="button"
+                    class="mode-btn @(FastMode ? "mode-active" : "")"
+                    @onclick="() => OnFastModeChanged.InvokeAsync(true)">
+                ⚡ Hızlı (Önce Hesapla)
+            </button>
+        </div>
+
+        <div class="run-stats">
+            <div class="stat-chip">
+                <span class="stat-label">Simülasyon Zamanı</span>
+                <strong id="sim-time-readout">@LabFormat.Fixed(SimulatedTime, 3) s / @LabFormat.Fixed(Duration, 1) s</strong>
+            </div>
+            <div class="stat-chip">
+                <span class="stat-label">Gerçek Zaman Çarpanı</span>
+                <strong id="rtf-readout">@RealTimeFactorText</strong>
+            </div>
+            <div class="stat-chip">
+                <span class="stat-label">Durum</span>
+                <strong id="run-status-readout" class="@StatusCssClass">@StatusText</strong>
+            </div>
+        </div>
+    </div>
+
+    <div class="progress-track">
+        <div class="progress-fill @(Result is { Fault: not null } ? "fill-danger" : Result is { Success: false } ? "fill-warning" : "fill-accent")"
+             style="width: @(ProgressPercent.ToString("F1", CultureInfo.InvariantCulture))%"></div>
+    </div>
+
+    @if (HasValidationErrors)
+    {
+        <div id="validation-banner" class="alert-box alert-danger">
+            <strong>Kurulum Hatası:</strong> Deneyi başlatmadan önce sol paneldeki kırmızı ile işaretlenmiş doğrulama hatalarını düzeltin.
+        </div>
+    }
+
+    @if (Result is not null)
+    {
+        if (Result.Fault is not null)
+        {
+            <div id="fault-banner" class="alert-box alert-danger">
+                <strong>Deney Hata ile Durdu:</strong> @LabState.TranslateFailureOrFault(Result)
+            </div>
+        }
+        else if (!Result.Success)
+        {
+            <div id="failure-banner" class="alert-box alert-warning">
+                <strong>Görev Başarısız:</strong> @LabState.TranslateFailureOrFault(Result)
+            </div>
+        }
+        else
+        {
+            <div id="success-banner" class="alert-box alert-ok">
+                <strong>Görev Başarılı:</strong> Görev ölçütü hiçbir fiziksel hata oluşmadan sağlandı.
+                @if (FastComputeWallMs > 0)
+                {
+                    <span>(Tüm senaryo @LabFormat.Fixed(FastComputeWallMs, 1) ms içinde hesaplandı.)</span>
+                }
+            </div>
+        }
+    }
+</section>
+
+@code {
+    [Parameter] public bool IsRunning { get; set; }
+    [Parameter] public bool IsPaused { get; set; }
+    [Parameter] public bool IsFinished { get; set; }
+    [Parameter] public bool FastMode { get; set; }
+    [Parameter] public bool HasValidationErrors { get; set; }
+    [Parameter] public double SimulatedTime { get; set; }
+    [Parameter] public double Duration { get; set; } = 10.0;
+    [Parameter] public double RealTimeFactor { get; set; }
+    [Parameter] public double FastComputeWallMs { get; set; }
+    [Parameter] public RunResult? Result { get; set; }
+
+    [Parameter] public EventCallback OnStart { get; set; }
+    [Parameter] public EventCallback OnPause { get; set; }
+    [Parameter] public EventCallback OnStep { get; set; }
+    [Parameter] public EventCallback OnReset { get; set; }
+    [Parameter] public EventCallback<bool> OnFastModeChanged { get; set; }
+
+    private double ProgressPercent => Duration > 0
+        ? Math.Clamp(100.0 * SimulatedTime / Duration, 0.0, 100.0)
+        : 0.0;
+
+    private string RealTimeFactorText => RealTimeFactor > 0
+        ? $"{LabFormat.Fixed(RealTimeFactor, 2)}×"
+        : "—";
+
+    private string StatusText
+    {
+        get
+        {
+            if (Result?.Fault is not null) return "Fiziksel Hata (Durdu)";
+            if (IsFinished && Result is { Success: true }) return "Tamamlandı (Başarılı)";
+            if (IsFinished && Result is { Success: false }) return "Tamamlandı (Başarısız)";
+            if (IsRunning) return FastMode ? "Hızlı Oynatılıyor" : "Çalışıyor";
+            if (IsPaused) return "Duraklatıldı";
+            return "Hazır";
+        }
+    }
+
+    private string StatusCssClass
+    {
+        get
+        {
+            if (Result?.Fault is not null) return "text-danger";
+            if (IsFinished && Result is { Success: false }) return "text-warning";
+            if (IsFinished && Result is { Success: true }) return "text-ok";
+            return "";
+        }
+    }
+}

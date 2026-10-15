@@ -1,7 +1,366 @@
-﻿@page "/"
+@page "/"
+@using System.Diagnostics
+@implements IDisposable
 
-<PageTitle>Home</PageTitle>
+<PageTitle>KON 445E — 4-DOF Robot Kol Sanal Laboratuvarı</PageTitle>
 
-<h1>Hello, world!</h1>
+<div class="lab-workspace">
+    <!-- Left Column: Setup Panel & Design Helper -->
+    <div class="col-setup">
+        <SetupPanel State="_state"
+                    OnScenarioSelected="HandleScenarioChanged"
+                    OnStateChanged="HandleSetupEdited" />
 
-Welcome to your new app.
+        <DesignHelper State="_state"
+                      OnGainsApplied="HandleSetupEdited" />
+    </div>
+
+    <!-- Centre Column: Run Controls, Arm View, Stability Panel -->
+    <div class="col-centre">
+        <RunControls IsRunning="_isRunning"
+                     IsPaused="_isPaused"
+                     IsFinished="_isFinished"
+                     FastMode="_fastMode"
+                     HasValidationErrors="@(_state.ValidationErrors.Count > 0)"
+                     SimulatedTime="@(_snapshot?.Time ?? 0.0)"
+                     Duration="_state.DurationSeconds"
+                     RealTimeFactor="_realTimeFactor"
+                     FastComputeWallMs="_fastComputeWallMs"
+                     Result="_result"
+                     OnStart="StartRunAsync"
+                     OnPause="PauseRun"
+                     OnStep="StepRun"
+                     OnReset="ResetRun"
+                     OnFastModeChanged="SetFastMode" />
+
+        <ArmView State="_state"
+                 Snapshot="_snapshot" />
+
+        <StabilityPanel Analysis="_state.Stability" />
+    </div>
+
+    <!-- Right Column: Live Readout -->
+    <div class="col-readout">
+        <LiveReadout State="_state"
+                     Snapshot="_snapshot"
+                     LatestRow="_latestRow"
+                     Result="_result" />
+    </div>
+</div>
+
+@code {
+    private readonly LabState _state = new();
+    private readonly ExperimentRunner _runner = new();
+
+    private CancellationTokenSource? _loopCts;
+    private bool _runnerStarted;
+    private bool _isRunning;
+    private bool _isPaused;
+    private bool _isFinished;
+    private bool _fastMode;
+
+    private ExperimentSnapshot? _snapshot;
+    private LogRow? _latestRow;
+    private RunResult? _result;
+    private IReadOnlyList<LogRow>? _precomputedLog;
+    private int _playbackIndex;
+    private double _realTimeFactor;
+    private double _fastComputeWallMs;
+
+    private void HandleScenarioChanged()
+    {
+        ResetRun();
+    }
+
+    private void HandleSetupEdited()
+    {
+        if (_isRunning || _runnerStarted || _isFinished)
+        {
+            ResetRun();
+        }
+        StateHasChanged();
+    }
+
+    private void SetFastMode(bool fast)
+    {
+        if (_fastMode == fast) return;
+        _fastMode = fast;
+        ResetRun();
+    }
+
+    private async Task StartRunAsync()
+    {
+        _state.RecomputeValidationAndStability();
+        if (_state.ValidationErrors.Count > 0) return;
+
+        CancelLoop();
+
+        if (_fastMode)
+        {
+            await RunFastModeAsync();
+            return;
+        }
+
+        if (!_runnerStarted || _isFinished)
+        {
+            var scenario = _state.BuildScenario();
+            _runner.Start(scenario);
+            _runnerStarted = true;
+            _isFinished = _runner.IsFinished;
+            _result = _runner.Result;
+            SyncFromRunner();
+            if (_isFinished)
+            {
+                _isRunning = false;
+                _isPaused = false;
+                return;
+            }
+        }
+
+        _isRunning = true;
+        _isPaused = false;
+        _loopCts = new CancellationTokenSource();
+        var token = _loopCts.Token;
+
+        // PROJECT.md §2 rule 4: each animation frame advances simulated time by a fixed slice (16 ms) and redraws.
+        const double frameSimSlice = 0.016;
+        var lastWallTimestamp = Stopwatch.GetTimestamp();
+
+        try
+        {
+            while (!token.IsCancellationRequested && !_runner.IsFinished)
+            {
+                await Task.Delay(16, token);
+                var now = Stopwatch.GetTimestamp();
+                var wallElapsed = Stopwatch.GetElapsedTime(lastWallTimestamp, now).TotalSeconds;
+                lastWallTimestamp = now;
+
+                var prevSimTime = _runner.Current.Time;
+                _runner.AdvanceBy(frameSimSlice);
+                var simDelta = _runner.Current.Time - prevSimTime;
+
+                if (wallElapsed > 1e-4 && simDelta > 0)
+                {
+                    var instantRtf = simDelta / wallElapsed;
+                    _realTimeFactor = _realTimeFactor <= 0 ? instantRtf : 0.8 * _realTimeFactor + 0.2 * instantRtf;
+                }
+
+                SyncFromRunner();
+
+                if (_runner.IsFinished)
+                {
+                    _isFinished = true;
+                    _isRunning = false;
+                    _isPaused = false;
+                    _result = _runner.Result;
+                    StateHasChanged();
+                    break;
+                }
+
+                StateHasChanged();
+            }
+        }
+        catch (TaskCanceledException)
+        {
+            // Paused or reset
+        }
+    }
+
+    private async Task RunFastModeAsync()
+    {
+        // PROJECT.md §2 rule 4 & T09 item 3: "hızlı" mode computes the whole scenario first (without blocking the UI) and then plays it back.
+        _isRunning = true;
+        _isPaused = false;
+        _loopCts = new CancellationTokenSource();
+        var token = _loopCts.Token;
+
+        try
+        {
+            if (_precomputedLog is null || _isFinished)
+            {
+                var scenario = _state.BuildScenario();
+                var sw = Stopwatch.StartNew();
+                _runner.Start(scenario);
+                while (!_runner.IsFinished && !token.IsCancellationRequested)
+                {
+                    _runner.AdvanceBy(1.0);
+                    await Task.Delay(1, token);
+                }
+                sw.Stop();
+                if (token.IsCancellationRequested) return;
+
+                var res = _runner.Result!;
+                _fastComputeWallMs = Math.Max(0.1, sw.Elapsed.TotalMilliseconds);
+                var totalSim = Math.Max(res.Final.Time, scenario.Step);
+                _realTimeFactor = totalSim / Math.Max(1e-5, sw.Elapsed.TotalSeconds);
+
+                _result = res;
+                _precomputedLog = res.Log;
+                _playbackIndex = 0;
+                _runnerStarted = true;
+                _isFinished = false;
+
+                if (_precomputedLog.Count == 0)
+                {
+                    _snapshot = res.Final;
+                    _latestRow = null;
+                    _isFinished = true;
+                    _isRunning = false;
+                    StateHasChanged();
+                    return;
+                }
+            }
+
+            // Play back the precomputed log in ~25 frames
+            var stepStride = Math.Max(1, _precomputedLog.Count / 25);
+
+            while (!token.IsCancellationRequested && _precomputedLog is not null)
+            {
+                ApplyPrecomputedSample(_playbackIndex);
+                StateHasChanged();
+
+                await Task.Delay(16, token);
+
+                if (_playbackIndex >= _precomputedLog.Count - 1)
+                {
+                    _snapshot = _result!.Final;
+                    _latestRow = _precomputedLog[^1];
+                    _isFinished = true;
+                    _isRunning = false;
+                    _isPaused = false;
+                    StateHasChanged();
+                    break;
+                }
+
+                _playbackIndex = Math.Min(_precomputedLog.Count - 1, _playbackIndex + stepStride);
+            }
+        }
+        catch (TaskCanceledException)
+        {
+            // Paused or reset during fast computation/playback
+        }
+    }
+
+    private void ApplyPrecomputedSample(int index)
+    {
+        if (_precomputedLog is null || _precomputedLog.Count == 0) return;
+        var clampedIdx = Math.Clamp(index, 0, _precomputedLog.Count - 1);
+        var row = _precomputedLog[clampedIdx];
+        _latestRow = row;
+        _snapshot = new ExperimentSnapshot(
+            row.Time,
+            row.Q,
+            row.QDot,
+            row.Tool,
+            row.PayloadAttached,
+            row.PayloadKg,
+            row.ObjectPosition,
+            row.Phase,
+            clampedIdx + 1);
+    }
+
+    private void PauseRun()
+    {
+        if (!_isRunning) return;
+        CancelLoop();
+        _isRunning = false;
+        _isPaused = true;
+    }
+
+    private void StepRun()
+    {
+        _state.RecomputeValidationAndStability();
+        if (_state.ValidationErrors.Count > 0) return;
+
+        CancelLoop();
+        _isRunning = false;
+
+        if (_fastMode)
+        {
+            if (_precomputedLog is null)
+            {
+                var scenario = _state.BuildScenario();
+                var sw = Stopwatch.StartNew();
+                var res = _runner.Run(scenario);
+                sw.Stop();
+                _fastComputeWallMs = Math.Max(0.1, sw.Elapsed.TotalMilliseconds);
+                _realTimeFactor = Math.Max(res.Final.Time, scenario.Step) / Math.Max(1e-5, sw.Elapsed.TotalSeconds);
+                _result = res;
+                _precomputedLog = res.Log;
+                _playbackIndex = 0;
+                _runnerStarted = true;
+            }
+            else if (_playbackIndex < _precomputedLog.Count - 1)
+            {
+                _playbackIndex++;
+            }
+
+            if (_precomputedLog.Count == 0 || _playbackIndex >= _precomputedLog.Count - 1)
+            {
+                _snapshot = _result!.Final;
+                _latestRow = _precomputedLog.Count > 0 ? _precomputedLog[^1] : null;
+                _isFinished = true;
+                _isPaused = false;
+            }
+            else
+            {
+                ApplyPrecomputedSample(_playbackIndex);
+                _isPaused = true;
+            }
+            return;
+        }
+
+        if (!_runnerStarted || _isFinished)
+        {
+            _runner.Start(_state.BuildScenario());
+            _runnerStarted = true;
+        }
+
+        if (!_runner.IsFinished)
+        {
+            _runner.AdvanceBy(_state.SamplePeriodSeconds);
+        }
+
+        SyncFromRunner();
+        _isFinished = _runner.IsFinished;
+        _result = _runner.Result;
+        _isPaused = !_isFinished;
+    }
+
+    private void ResetRun()
+    {
+        CancelLoop();
+        _runnerStarted = false;
+        _isRunning = false;
+        _isPaused = false;
+        _isFinished = false;
+        _snapshot = null;
+        _latestRow = null;
+        _result = null;
+        _precomputedLog = null;
+        _playbackIndex = 0;
+        _realTimeFactor = 0;
+        _fastComputeWallMs = 0;
+    }
+
+    private void SyncFromRunner()
+    {
+        _snapshot = _runner.Current;
+        _latestRow = _runner.Log.Count > 0 ? _runner.Log[^1] : null;
+    }
+
+    private void CancelLoop()
+    {
+        if (_loopCts is not null)
+        {
+            _loopCts.Cancel();
+            _loopCts.Dispose();
+            _loopCts = null;
+        }
+    }
+
+    public void Dispose()
+    {
+        CancelLoop();
+    }
+}

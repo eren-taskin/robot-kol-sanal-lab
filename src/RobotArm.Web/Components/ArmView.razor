@@ -1,0 +1,330 @@
+@namespace RobotArm.Web.Components
+
+<section class="panel-card arm-view-panel">
+    <div class="panel-header">
+        <h2>Robot Kol Görünümü</h2>
+        <div class="legend-row">
+            <span class="legend-item"><span class="dot dot-normal"></span>Eklem (Normal)</span>
+            <span class="legend-item"><span class="dot dot-amber"></span>Sınıra Yakın</span>
+            <span class="legend-item"><span class="dot dot-red"></span>Sınır Aşıldı</span>
+            <span class="legend-item"><span class="dot dot-target"></span>Hedef</span>
+            <span class="legend-item"><span class="dot dot-object"></span>Nesne / Yük</span>
+        </div>
+    </div>
+
+    @{
+        var q = CurrentQ;
+        double[] qPlanar = [0.0, q[1], q[2], q[3]];
+        var (frames3D, tool3D) = ForwardKinematics.ComputeFrames(_model, q);
+        var (framesPlanar, toolPlanar) = ForwardKinematics.ComputeFrames(_model, qPlanar);
+
+        // Shoulder corner in planar view: frame 2 translated by (0, 0, a2z)
+        var shoulderCornerPlanar = framesPlanar[1].TransformPoint(new Vector3d(0, 0, OpenManipulatorXGeometry.A2Z));
+        // Tool tip direction in planar view
+        var toolDirPlanar = framesPlanar[3].TransformPoint(new Vector3d(OpenManipulatorXGeometry.L4 + 0.018, 0, 0));
+
+        var target = TargetPosition;
+        var targetR = Math.Sqrt(target.X * target.X + target.Y * target.Y);
+        var obj = ObjectPosition;
+        var objR = Math.Sqrt(obj.X * obj.X + obj.Y * obj.Y);
+
+        var startTool = ForwardKinematics.ClosedForm(State.StartQ).Position;
+        var startToolR = Math.Sqrt(startTool.X * startTool.X + startTool.Y * startTool.Y);
+    }
+
+    <div class="svg-views-grid">
+        <!-- SIDE VIEW: r-z plane (mm) -->
+        <div class="svg-box">
+            <div class="svg-title">Yan Görünüm (r–z Düzlemi, ölçek: mm)</div>
+            <svg id="arm-side-svg" viewBox="-185 -445 630 540" class="arm-svg" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                    <pattern id="floor-hatch" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+                        <line x1="0" y1="0" x2="0" y2="12" stroke="#cbd5e1" stroke-width="3" />
+                    </pattern>
+                </defs>
+
+                <!-- Grid lines (r from -100 to 400 mm, z from 0 to 400 mm; SVG Y is -z) -->
+                @for (var rGrid = -100; rGrid <= 400; rGrid += 100)
+                {
+                    <g>
+                        <line x1="@rGrid" y1="-400" x2="@rGrid" y2="40" stroke="@(rGrid == 0 ? "#94a3b8" : "#e2e8f0")" stroke-width="@(rGrid == 0 ? "1.5" : "1")" />
+                        <text x="@rGrid" y="56" text-anchor="middle" class="svg-axis-label">@rGrid</text>
+                    </g>
+                }
+                @for (var zGrid = 0; zGrid <= 400; zGrid += 100)
+                {
+                    var ySvg = -zGrid;
+                    <g>
+                        <line x1="-115" y1="@ySvg" x2="415" y2="@ySvg" stroke="#e2e8f0" stroke-width="1" />
+                        <text x="-122" y="@(ySvg + 4)" text-anchor="end" class="svg-axis-label">@zGrid</text>
+                    </g>
+                }
+                <text x="415" y="78" text-anchor="end" class="svg-axis-title">r (mm)</text>
+                <text x="-122" y="-418" text-anchor="end" class="svg-axis-title">z (mm)</text>
+
+                <!-- Floor (z = 0 mm) -->
+                <rect x="-115" y="0" width="530" height="36" fill="url(#floor-hatch)" />
+                <line x1="-115" y1="0" x2="415" y2="0" stroke="#475569" stroke-width="2.5" />
+                <text x="410" y="16" text-anchor="end" class="svg-floor-label">Zemin (z = 0 mm)</text>
+
+                <!-- Track reference path in side view -->
+                @if (State.TaskKind == TaskKind.Track)
+                {
+                    if (State.TrackShape == TrackShape.Line)
+                    {
+                        <line x1="@Fmt(startToolR * 1000)" y1="@Fmt(-startTool.Z * 1000)"
+                              x2="@Fmt(targetR * 1000)" y2="@Fmt(-target.Z * 1000)"
+                              stroke="#0d9488" stroke-width="2" stroke-dasharray="5,4" />
+                    }
+                    else
+                    {
+                        var radMm = State.CircleRadiusMeters * 1000.0;
+                        <line x1="@Fmt(startToolR * 1000 - 2 * radMm)" y1="@Fmt(-startTool.Z * 1000)"
+                              x2="@Fmt(startToolR * 1000)" y2="@Fmt(-startTool.Z * 1000)"
+                              stroke="#0d9488" stroke-width="3" stroke-dasharray="4,3" />
+                    }
+                }
+
+                <!-- Target marker -->
+                <g transform="translate(@Fmt(targetR * 1000), @Fmt(-target.Z * 1000))">
+                    <circle r="8" fill="none" stroke="#16a34a" stroke-width="2" stroke-dasharray="3,2" />
+                    <line x1="-11" y1="0" x2="11" y2="0" stroke="#16a34a" stroke-width="1.8" />
+                    <line x1="0" y1="-11" x2="0" y2="11" stroke="#16a34a" stroke-width="1.8" />
+                    <text x="12" y="-8" class="svg-tag-target">Hedef</text>
+                </g>
+
+                <!-- PickPlace Object when detached -->
+                @if (State.TaskKind == TaskKind.PickPlace && !PayloadAttached)
+                {
+                    <g transform="translate(@Fmt(objR * 1000), @Fmt(-obj.Z * 1000))">
+                        <rect x="-8" y="-8" width="16" height="16" rx="3" fill="#ea580c" stroke="#9a3412" stroke-width="1.5" />
+                        <text x="12" y="14" class="svg-tag-obj">Nesne (@LabFormat.Fixed(State.PayloadKg, 2) kg)</text>
+                    </g>
+                }
+
+                <!-- Base pedestal -->
+                <rect x="-24" y="-12" width="48" height="12" rx="2" fill="#334155" />
+
+                <!-- Links in r-z plane -->
+                <!-- Base (0,0) to Joint 2 (0, d1) -->
+                <line x1="@Fmt(framesPlanar[0].Origin.X * 1000)" y1="@Fmt(-framesPlanar[0].Origin.Z * 1000)"
+                      x2="@Fmt(framesPlanar[1].Origin.X * 1000)" y2="@Fmt(-framesPlanar[1].Origin.Z * 1000)"
+                      stroke="#334155" stroke-width="10" stroke-linecap="round" />
+
+                <!-- Link 2 (L-shaped proximal link: Joint 2 -> Shoulder corner -> Joint 3) -->
+                <polyline points="@Fmt(framesPlanar[1].Origin.X * 1000),@Fmt(-framesPlanar[1].Origin.Z * 1000) @Fmt(shoulderCornerPlanar.X * 1000),@Fmt(-shoulderCornerPlanar.Z * 1000) @Fmt(framesPlanar[2].Origin.X * 1000),@Fmt(-framesPlanar[2].Origin.Z * 1000)"
+                          fill="none" stroke="#1e40af" stroke-width="8" stroke-linejoin="round" stroke-linecap="round" />
+
+                <!-- Link 3 (Joint 3 -> Joint 4) -->
+                <line x1="@Fmt(framesPlanar[2].Origin.X * 1000)" y1="@Fmt(-framesPlanar[2].Origin.Z * 1000)"
+                      x2="@Fmt(framesPlanar[3].Origin.X * 1000)" y2="@Fmt(-framesPlanar[3].Origin.Z * 1000)"
+                      stroke="#2563eb" stroke-width="7" stroke-linecap="round" />
+
+                <!-- Link 4 / Gripper (Joint 4 -> Tool) -->
+                <line x1="@Fmt(framesPlanar[3].Origin.X * 1000)" y1="@Fmt(-framesPlanar[3].Origin.Z * 1000)"
+                      x2="@Fmt(toolPlanar.X * 1000)" y2="@Fmt(-toolPlanar.Z * 1000)"
+                      stroke="#3b82f6" stroke-width="5.5" stroke-linecap="round" />
+
+                <!-- Gripper jaws indicator -->
+                <line x1="@Fmt(toolPlanar.X * 1000)" y1="@Fmt(-toolPlanar.Z * 1000)"
+                      x2="@Fmt(toolDirPlanar.X * 1000)" y2="@Fmt(-toolDirPlanar.Z * 1000)"
+                      stroke="#0f172a" stroke-width="3" stroke-linecap="round" />
+
+                <!-- Attached payload indicator -->
+                @if (PayloadAttached || (State.TaskKind != TaskKind.PickPlace && EffectivePayloadKg > 0))
+                {
+                    <g transform="translate(@Fmt(toolPlanar.X * 1000), @Fmt(-toolPlanar.Z * 1000))">
+                        <rect x="-10" y="-10" width="20" height="20" rx="4" fill="#ea580c" stroke="#7c2d12" stroke-width="1.8" />
+                        <text x="14" y="-4" class="svg-tag-obj">Yük (@LabFormat.Fixed(EffectivePayloadKg, 2) kg)</text>
+                    </g>
+                }
+
+                <!-- Joints 1..4 circles colored by joint-limit state -->
+                @for (var i = 0; i < 4; i++)
+                {
+                    var origin = framesPlanar[i].Origin;
+                    var fill = GetJointColor(i, q[i]);
+                    var rRadius = i == 0 ? 7 : 6.5;
+                    <g transform="translate(@Fmt(origin.X * 1000), @Fmt(-origin.Z * 1000))">
+                        <circle r="@Fmt(rRadius)" fill="@fill" stroke="#ffffff" stroke-width="2" />
+                        <text x="@(i == 0 ? -24 : 9)" y="@(i == 0 ? -4 : -8)" class="svg-joint-label">E@(i + 1)</text>
+                    </g>
+                }
+
+                <!-- Tool point dot -->
+                <circle cx="@Fmt(toolPlanar.X * 1000)" cy="@Fmt(-toolPlanar.Z * 1000)" r="4.5" fill="#0f172a" stroke="#ffffff" stroke-width="1.5" />
+            </svg>
+        </div>
+
+        <!-- TOP VIEW: x-y plane (mm) -->
+        <div class="svg-box">
+            <div class="svg-title">Üst Görünüm (x–y Düzlemi, ölçek: mm)</div>
+            <svg id="arm-top-svg" viewBox="-280 -355 715 720" class="arm-svg" xmlns="http://www.w3.org/2000/svg">
+                <!-- Grid lines (x from -200 to 400 mm, y from -300 to 300 mm; SVG Y is -y) -->
+                @for (var xGrid = -200; xGrid <= 400; xGrid += 100)
+                {
+                    <g>
+                        <line x1="@xGrid" y1="-300" x2="@xGrid" y2="300" stroke="@(xGrid == 0 ? "#94a3b8" : "#e2e8f0")" stroke-width="@(xGrid == 0 ? "1.5" : "1")" />
+                        <text x="@xGrid" y="322" text-anchor="middle" class="svg-axis-label">@xGrid</text>
+                    </g>
+                }
+                @for (var yGrid = -300; yGrid <= 300; yGrid += 100)
+                {
+                    var ySvg = -yGrid;
+                    <g>
+                        <line x1="-200" y1="@ySvg" x2="400" y2="@ySvg" stroke="@(yGrid == 0 ? "#94a3b8" : "#e2e8f0")" stroke-width="@(yGrid == 0 ? "1.5" : "1")" />
+                        <text x="-210" y="@(ySvg + 4)" text-anchor="end" class="svg-axis-label">@yGrid</text>
+                    </g>
+                }
+                <text x="400" y="346" text-anchor="end" class="svg-axis-title">x (mm)</text>
+                <text x="-210" y="-322" text-anchor="end" class="svg-axis-title">y (mm)</text>
+
+                <!-- Workspace reach guide circle (380 mm) -->
+                <circle cx="0" cy="0" r="380" fill="none" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="6,4" />
+
+                <!-- Arm plane direction ray at yaw q1 -->
+                <line x1="0" y1="0"
+                      x2="@Fmt(380 * Math.Cos(q[0]))" y2="@Fmt(-380 * Math.Sin(q[0]))"
+                      stroke="#bfdbfe" stroke-width="1.5" stroke-dasharray="4,4" />
+
+                <!-- Track reference path in top view -->
+                @if (State.TaskKind == TaskKind.Track)
+                {
+                    if (State.TrackShape == TrackShape.Circle)
+                    {
+                        var radMm = State.CircleRadiusMeters * 1000.0;
+                        var cxMm = startTool.X * 1000.0 - radMm;
+                        var cyMm = -startTool.Y * 1000.0;
+                        <circle cx="@Fmt(cxMm)" cy="@Fmt(cyMm)" r="@Fmt(radMm)"
+                                fill="none" stroke="#0d9488" stroke-width="2" stroke-dasharray="4,3" />
+                    }
+                    else
+                    {
+                        <line x1="@Fmt(startTool.X * 1000)" y1="@Fmt(-startTool.Y * 1000)"
+                              x2="@Fmt(target.X * 1000)" y2="@Fmt(-target.Y * 1000)"
+                              stroke="#0d9488" stroke-width="2" stroke-dasharray="5,4" />
+                    }
+                }
+
+                <!-- Target in x-y -->
+                <g transform="translate(@Fmt(target.X * 1000), @Fmt(-target.Y * 1000))">
+                    <circle r="8" fill="none" stroke="#16a34a" stroke-width="2" stroke-dasharray="3,2" />
+                    <line x1="-11" y1="0" x2="11" y2="0" stroke="#16a34a" stroke-width="1.8" />
+                    <line x1="0" y1="-11" x2="0" y2="11" stroke="#16a34a" stroke-width="1.8" />
+                    <text x="12" y="-8" class="svg-tag-target">Hedef</text>
+                </g>
+
+                <!-- PickPlace Object when detached -->
+                @if (State.TaskKind == TaskKind.PickPlace && !PayloadAttached)
+                {
+                    <g transform="translate(@Fmt(obj.X * 1000), @Fmt(-obj.Y * 1000))">
+                        <rect x="-8" y="-8" width="16" height="16" rx="3" fill="#ea580c" stroke="#9a3412" stroke-width="1.5" />
+                        <text x="12" y="14" class="svg-tag-obj">Nesne</text>
+                    </g>
+                }
+
+                <!-- Arm links in x-y projection -->
+                <polyline points="@Fmt(frames3D[0].Origin.X * 1000),@Fmt(-frames3D[0].Origin.Y * 1000) @Fmt(frames3D[1].Origin.X * 1000),@Fmt(-frames3D[1].Origin.Y * 1000) @Fmt(frames3D[2].Origin.X * 1000),@Fmt(-frames3D[2].Origin.Y * 1000) @Fmt(frames3D[3].Origin.X * 1000),@Fmt(-frames3D[3].Origin.Y * 1000) @Fmt(tool3D.X * 1000),@Fmt(-tool3D.Y * 1000)"
+                          fill="none" stroke="#2563eb" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+
+                <!-- Attached payload in x-y -->
+                @if (PayloadAttached || (State.TaskKind != TaskKind.PickPlace && EffectivePayloadKg > 0))
+                {
+                    <g transform="translate(@Fmt(tool3D.X * 1000), @Fmt(-tool3D.Y * 1000))">
+                        <rect x="-9" y="-9" width="18" height="18" rx="4" fill="#ea580c" stroke="#7c2d12" stroke-width="1.8" />
+                    </g>
+                }
+
+                <!-- Joints in x-y -->
+                @for (var i = 0; i < 4; i++)
+                {
+                    var origin = frames3D[i].Origin;
+                    var fill = GetJointColor(i, q[i]);
+                    <circle cx="@Fmt(origin.X * 1000)" cy="@Fmt(-origin.Y * 1000)" r="6.5" fill="@fill" stroke="#ffffff" stroke-width="2" />
+                }
+
+                <!-- Tool dot in x-y -->
+                <circle cx="@Fmt(tool3D.X * 1000)" cy="@Fmt(-tool3D.Y * 1000)" r="4.5" fill="#0f172a" stroke="#ffffff" stroke-width="1.5" />
+            </svg>
+        </div>
+    </div>
+
+    <!-- Joint limit status strip -->
+    <div class="joint-limit-strip">
+        @for (var i = 0; i < 4; i++)
+        {
+            var angle = q[i];
+            var joint = _model.Joints[i];
+            var stateClass = GetJointBadgeClass(i, angle);
+            var statusLabel = GetJointStatusText(i, angle);
+            <div class="joint-limit-pill @stateClass">
+                <span><strong>Eklem @(i + 1):</strong> @LabFormat.Fixed(angle, 3) rad</span>
+                <small>[sınır: @LabFormat.Fixed(joint.LowerLimit, 2) .. @LabFormat.Fixed(joint.UpperLimit, 2)] — @statusLabel</small>
+            </div>
+        }
+    </div>
+</section>
+
+@code {
+    private static readonly ArmModel _model = ArmModel.OpenManipulatorX();
+
+    [Parameter, EditorRequired] public LabState State { get; set; } = null!;
+    [Parameter] public ExperimentSnapshot? Snapshot { get; set; }
+
+    private double[] CurrentQ => Snapshot is ExperimentSnapshot s
+        ? s.Q.ToArray()
+        : State.StartQ.Select(v => double.IsFinite(v) ? v : 0.0).ToArray();
+
+    private bool PayloadAttached => Snapshot is ExperimentSnapshot s
+        ? s.PayloadAttached
+        : State.TaskKind != TaskKind.PickPlace && State.PayloadKg > 0;
+
+    private double EffectivePayloadKg => Snapshot is ExperimentSnapshot s
+        ? s.PayloadKg
+        : (State.TaskKind == TaskKind.PickPlace ? 0.0 : Math.Max(0.0, State.PayloadKg));
+
+    private Vector3d TargetPosition => new(
+        double.IsFinite(State.TargetMeters[0]) ? State.TargetMeters[0] : 0,
+        double.IsFinite(State.TargetMeters[1]) ? State.TargetMeters[1] : 0,
+        double.IsFinite(State.TargetMeters[2]) ? State.TargetMeters[2] : 0);
+
+    private Vector3d ObjectPosition => Snapshot is ExperimentSnapshot s && State.TaskKind == TaskKind.PickPlace
+        ? s.ObjectPosition
+        : new Vector3d(
+            double.IsFinite(State.ObjectPositionMeters[0]) ? State.ObjectPositionMeters[0] : 0,
+            double.IsFinite(State.ObjectPositionMeters[1]) ? State.ObjectPositionMeters[1] : 0,
+            double.IsFinite(State.ObjectPositionMeters[2]) ? State.ObjectPositionMeters[2] : 0);
+
+    private static string Fmt(double value) => value.ToString("F2", CultureInfo.InvariantCulture);
+
+    private static bool IsNearLimit(JointDefinition j, double angle)
+    {
+        if (!j.IsWithinLimits(angle)) return false;
+        var margin = Math.Min(0.15, 0.08 * (j.UpperLimit - j.LowerLimit));
+        return (angle - j.LowerLimit) <= margin || (j.UpperLimit - angle) <= margin;
+    }
+
+    private static string GetJointColor(int index, double angle)
+    {
+        var j = _model.Joints[index];
+        if (!j.IsWithinLimits(angle)) return "#dc2626"; // Red: outside limit
+        if (IsNearLimit(j, angle)) return "#f59e0b";    // Amber: near limit
+        return "#1d4ed8";                               // Accent blue: normal
+    }
+
+    private static string GetJointBadgeClass(int index, double angle)
+    {
+        var j = _model.Joints[index];
+        if (!j.IsWithinLimits(angle)) return "limit-pill-danger";
+        if (IsNearLimit(j, angle)) return "limit-pill-amber";
+        return "limit-pill-normal";
+    }
+
+    private static string GetJointStatusText(int index, double angle)
+    {
+        var j = _model.Joints[index];
+        if (!j.IsWithinLimits(angle)) return "Sınır Dışı";
+        if (IsNearLimit(j, angle)) return "Sınıra Yakın";
+        return "Normal";
+    }
+}

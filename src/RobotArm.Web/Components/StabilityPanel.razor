@@ -1,0 +1,120 @@
+@namespace RobotArm.Web.Components
+
+<section class="panel-card stability-panel" id="stability-panel">
+    <div class="panel-header">
+        <h2>Kararlılık ve Tork Bütçesi Analizi (Başlangıç Pozu)</h2>
+    </div>
+
+    @if (!Analysis.IsValid)
+    {
+        <div class="alert-box alert-danger">
+            Analiz hesaplanamadı: @Analysis.ErrorMessage
+        </div>
+    }
+    else
+    {
+        <div class="stability-grid">
+            <!-- 1. RK4 Adım Boyu Kararlılığı -->
+            <div id="rk4-stability-card" class="stability-item @(Analysis.StepWarning ? "status-warning" : "status-ok")">
+                <div class="stability-title-row">
+                    <strong>1. RK4 Adım Boyu Sınırı</strong>
+                    <span class="status-pill @(Analysis.StepWarning ? "pill-warning" : "pill-ok")">
+                        @(Analysis.StepWarning ? "Uyarı (h > h_maks)" : "Kararlı")
+                    </span>
+                </div>
+                <div class="stability-metrics">
+                    <div>Seçilen h: <strong>@LabFormat.Fixed(Analysis.StepSeconds * 1000, 3) ms</strong></div>
+                    <div>
+                        Kararlı sınır (h_maks):
+                        <strong>
+                            @(double.IsPositiveInfinity(Analysis.MaxStableStepSeconds)
+                                ? "∞ ms"
+                                : $"{LabFormat.Fixed(Analysis.MaxStableStepSeconds * 1000, 3)} ms")
+                        </strong>
+                    </div>
+                </div>
+                @if (Analysis.StepWarning)
+                {
+                    <p id="rk4-warning-text" class="warning-sentence">
+                        Seçilen adım boyu (h) başlangıç pozundaki RK4 kararlılık sınırını aştığı için kol durgun halde bile sayısal olarak titreyecek veya kararsızlaşacaktır; h değerini @LabFormat.Fixed(Analysis.MaxStableStepSeconds * 1000, 2) ms sınırının altına düşürün.
+                    </p>
+                }
+            </div>
+
+            <!-- 2. Örneklemeli Kapalı Çevrim Kararlılığı -->
+            <div id="sampled-loop-card" class="stability-item @(Analysis.SampledLoopUnstable ? "status-danger" : "status-ok")">
+                <div class="stability-title-row">
+                    <strong>2. Örneklemeli Kapalı Çevrim</strong>
+                    <span class="status-pill @(Analysis.SampledLoopUnstable ? "pill-danger" : "pill-ok")">
+                        @(Analysis.SampledLoopUnstable ? "Kararsız (ρ ≥ 1)" : "Kararlı (ρ < 1)")
+                    </span>
+                </div>
+                <div class="stability-metrics">
+                    <div>Seçilen Ts (@LabFormat.Fixed(Analysis.SamplePeriodSeconds * 1000, 2) ms) için ρ: <strong>@LabFormat.Fixed(Analysis.SpectralRadius, 4)</strong></div>
+                    <div>
+                        Kararlı sınır (Ts_maks):
+                        <strong>
+                            @(double.IsPositiveInfinity(Analysis.MaxStableSamplePeriodSeconds)
+                                ? "∞ ms"
+                                : Analysis.MaxStableSamplePeriodSeconds <= 0
+                                    ? "0 ms (Sürekli çevrim kararsız)"
+                                    : $"{LabFormat.Fixed(Analysis.MaxStableSamplePeriodSeconds * 1000, 2)} ms")
+                        </strong>
+                    </div>
+                </div>
+                @if (Analysis.ExcludesIntegralNote)
+                {
+                    <div class="stability-subnote">Not: Doğrusallaştırma yalnızca PD kısmını içerir; integral durumu (Ki) hariçtir.</div>
+                }
+                @if (Analysis.SampledLoopUnstable)
+                {
+                    <p id="sampled-warning-text" class="warning-sentence danger-sentence">
+                        @if (Analysis.MaxStableSamplePeriodSeconds <= 0)
+                        {
+                            @:Bu poz ve yükte sürekli zamanlı kapalı çevrim dahi kararsız olduğundan (ρ ≥ 1) kol hiçbir örnekleme periyodunda tutulamayacaktır; Kp kazancını artırın veya yerçekimi telafili bir kontrolcü (PDG, CT) seçin.
+                        }
+                        else
+                        {
+                            @:Örneklemeli kapalı çevrim spektral yarıçapı ρ ≥ 1 olduğundan ayrık zamanlı kontrol döngüsü salınıma girip kararsızlaşacaktır; örnekleme periyodu Ts değerini @LabFormat.Fixed(Analysis.MaxStableSamplePeriodSeconds * 1000, 2) ms sınırının altına indirin veya kontrolcü kazançlarını (Kp, Kd) azaltın.
+                        }
+                    </p>
+                }
+            </div>
+
+            <!-- 3. Tork Bütçesi (Yerçekimi vs τmax) -->
+            <div id="torque-budget-card" class="stability-item @(Analysis.TorqueBudgetWarning ? "status-warning" : "status-ok")">
+                <div class="stability-title-row">
+                    <strong>3. Başlangıç Pozu Tork Bütçesi (|g(q₀)| / τmax)</strong>
+                    <span class="status-pill @(Analysis.TorqueBudgetWarning ? "pill-warning" : "pill-ok")">
+                        @(Analysis.TorqueBudgetWarning ? "Uyarı (> %80)" : "Uygun (≤ %80)")
+                    </span>
+                </div>
+                <div class="torque-bars">
+                    @for (var i = 0; i < 4; i++)
+                    {
+                        var pct = Analysis.TorqueUsagePercent[i];
+                        var over80 = pct > 80.0;
+                        var over100 = pct > 100.0;
+                        <div class="torque-bar-row">
+                            <span class="torque-joint-label">E@(i + 1): @LabFormat.Fixed(Math.Abs(Analysis.GravityTorqueNm[i]), 2) / @LabFormat.Fixed(Analysis.StallTorqueNm[i], 1) N·m (%@LabFormat.Fixed(pct, 0))</span>
+                            <div class="torque-bar-track">
+                                <div class="torque-bar-fill @(over100 ? "bar-danger" : over80 ? "bar-warning" : "bar-ok")"
+                                     style="width: @(Math.Min(100.0, pct).ToString("F1", CultureInfo.InvariantCulture))%"></div>
+                            </div>
+                        </div>
+                    }
+                </div>
+                @if (Analysis.TorqueBudgetWarning)
+                {
+                    <p id="torque-warning-text" class="warning-sentence">
+                        Başlangıç pozundaki yerçekimi torku motor sınırının (τmax = 4,1 N·m) %80'ini aştığı için motorlar doyuma girecek ve kol hedef pozu tutamayacak veya sarkacaktır; yük kütlesini, yerçekimi ivmesini (g) veya kolun uzanma açısını azaltın.
+                    </p>
+                }
+            </div>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public StabilityAnalysis Analysis { get; set; } = null!;
+}

@@ -1,0 +1,94 @@
+@namespace RobotArm.Web.Components
+
+<section class="panel-card design-helper-panel">
+    <div class="panel-header">
+        <h2>Tasarım Yardımcısı (ωn, ζ → Kazanç)</h2>
+        <button id="apply-design-helper-btn" type="button" class="btn-accent-sm" @onclick="ApplyNow">
+            Kazançları Uygula
+        </button>
+    </div>
+
+    <p class="helper-note">
+        @if (State.ControlMethod == ControlMethod.CT)
+        {
+            <span>
+                <strong>CT / CT+I Kuralı:</strong> Doğrusallaştırılmış birim kütleli dış çevrim için
+                <code>Kp,i = ωn,i² (1/s²)</code>, <code>Kd,i = 2·ζi·ωn,i (1/s)</code>
+                @(State.IntegralEnabled ? " ve CT+I başlangıç değeri olarak Ki,i = ωn,i³ / 10 (1/s³)" : "")
+                uygulanır.
+            </span>
+        }
+        else
+        {
+            <span>
+                <strong>PD / PDG / PID Yaklaşımı:</strong> Kontrolcünün inanç modelinin başlangıç pozundaki
+                atalet matrisinin köşegen elemanları <code>M̂ii</code> kullanılarak kuplajsız tek-eklem yaklaşımıyla
+                <code>Kp,i = M̂ii·ωn,i² (N·m/rad)</code> ve <code>Kd,i = 2·ζi·ωn,i·M̂ii (N·m·s/rad)</code> hesaplanır.
+            </span>
+        }
+    </p>
+
+    @{
+        var mDiag = State.GetBelievedInertiaDiagonalAtStart();
+    }
+
+    <table class="gains-table helper-table">
+        <thead>
+            <tr>
+                <th>Eklem</th>
+                <th>M̂ii <small>(kg·m²)</small></th>
+                <th>ωn <small>(rad/s)</small></th>
+                <th>ζ <small>(-)</small></th>
+            </tr>
+        </thead>
+        <tbody>
+            @for (var i = 0; i < 4; i++)
+            {
+                var idx = i;
+                <tr>
+                    <td class="joint-col">E@(idx + 1)</td>
+                    <td class="mono-cell">@LabFormat.Fixed(mDiag[idx], 5)</td>
+                    <td>
+                        <input id="design-wn-@idx" type="text" inputmode="decimal" class="form-input gain-input"
+                               value="@LabFormat.Input(State.DesignOmegaN[idx])"
+                               @onchange="e => OnOmegaChanged(idx, e)" />
+                    </td>
+                    <td>
+                        <input id="design-zeta-@idx" type="text" inputmode="decimal" class="form-input gain-input"
+                               value="@LabFormat.Input(State.DesignZeta[idx])"
+                               @onchange="e => OnZetaChanged(idx, e)" />
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public LabState State { get; set; } = null!;
+    [Parameter] public EventCallback OnGainsApplied { get; set; }
+
+    private async Task OnOmegaChanged(int index, ChangeEventArgs e)
+    {
+        if (LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) && v >= 0)
+        {
+            State.DesignOmegaN[index] = v;
+            await ApplyNow();
+        }
+    }
+
+    private async Task OnZetaChanged(int index, ChangeEventArgs e)
+    {
+        if (LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) && v >= 0)
+        {
+            State.DesignZeta[index] = v;
+            await ApplyNow();
+        }
+    }
+
+    private async Task ApplyNow()
+    {
+        State.ApplyDesignHelperGains();
+        await OnGainsApplied.InvokeAsync();
+    }
+}
