@@ -2,6 +2,7 @@ using System.Numerics;
 using RobotArm.Core.Analysis;
 using RobotArm.Core.Control;
 using RobotArm.Core.Model;
+using RobotArm.Core.Tasks;
 using Xunit.Abstractions;
 using static System.FormattableString;
 
@@ -89,6 +90,95 @@ public sealed class LoopFrequencyResponseTests(ITestOutputHelper output)
             for (var c = 0; c < n; c++) k[r.Joint * n + c] *= factor;
             var acl = DenseMatrix.Add(a, DenseMatrix.Multiply(b, k, n, 4, n), -1.0);
             Assert.Equal(1.0, EigenSolver.SpectralRadius(acl, n), 1e-6);
+        }
+    }
+
+    /// <summary>
+    /// Regression check across all five planets, payloads 0 and 0.5 kg, and the distinct start poses of
+    /// <see cref="ScenarioLibrary.All"/> for the default gains of all four controllers (PID, PDG, CT, CT+I).
+    /// CT+I must keep ρ &lt; 1, gain margin ≥ 6 dB and phase margin ≥ 40° on every joint in every case.
+    /// </summary>
+    [Fact]
+    public void DefaultGains_MarginsAtLibraryStartPoses_DoNotRegress()
+    {
+        var arm = ArmModel.OpenManipulatorX();
+        var poses = new List<(string Name, double[] Q)>();
+        foreach (var s in ScenarioLibrary.All)
+        {
+            var q = s.Task.Start.ToArray();
+            if (!poses.Any(p => p.Q.Zip(q, (a, b) => Math.Abs(a - b)).Max() < 1e-12))
+                poses.Add((s.Name, q));
+        }
+
+        foreach (var law in new[] { "PID", "PDG", "CT", "CT+I" })
+        {
+            var maxRho = 0.0;
+            var minGm = new[] { double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity };
+            var minAbsGm = new[] { double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity };
+            var minPm = new[] { double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity };
+
+            foreach (var planet in Planet.All)
+            {
+                foreach (var payload in new[] { 0.0, 0.5 })
+                {
+                    var belief = new ControllerBelief(arm, planet, payload);
+                    ILinearisableController controller = law switch
+                    {
+                        "PID" => new Pid(belief, Pid.DefaultGains),
+                        "PDG" => new PdGravity(belief, PdGravity.DefaultGains),
+                        "CT" => new ComputedTorque(belief, ComputedTorque.DefaultGains),
+                        _ => new ComputedTorque(belief, ComputedTorque.DefaultIntegralPdGains, integralGains: ComputedTorque.DefaultIntegralGains),
+                    };
+                    for (var pIndex = 0; pIndex < poses.Count; pIndex++)
+                    {
+                        var (poseName, q0) = poses[pIndex];
+                        var model = SampledLoopModel.ForArm(arm, planet, payload, q0, controller, Ts);
+                        var rho = LinearAnalysis.ClosedLoopPoles(model).SpectralRadius;
+                        maxRho = Math.Max(maxRho, rho);
+                        Assert.True(rho < 1.0, Invariant($"{law} {planet.Key} {payload} kg ({poseName}): ρ = {rho:F6}"));
+
+                        for (var j = 0; j < 4; j++)
+                        {
+                            var b = LoopFrequencyResponse.Compute(model, j, 200);
+                            minGm[j] = Math.Min(minGm[j], b.GainMarginDb);
+                            minAbsGm[j] = Math.Min(minAbsGm[j], Math.Abs(b.GainMarginDb));
+                            minPm[j] = Math.Min(minPm[j], b.PhaseMarginDeg);
+
+                            if (law == "CT+I")
+                            {
+                                Assert.True(b.GainMarginDb >= 6.0, Invariant($"CT+I J{j + 1} {planet.Key} {payload} kg ({poseName}): GM = {b.GainMarginDb:F2} dB"));
+                                Assert.True(b.PhaseMarginDeg >= 40.0, Invariant($"CT+I J{j + 1} {planet.Key} {payload} kg ({poseName}): PM = {b.PhaseMarginDeg:F2}°"));
+                            }
+                            else if (law == "PDG" && pIndex != 1)
+                            {
+                                Assert.True(b.GainMarginDb >= 6.0, Invariant($"PDG J{j + 1} {planet.Key} {payload} kg ({poseName}): GM = {b.GainMarginDb:F2} dB"));
+                                Assert.True(b.PhaseMarginDeg >= 40.0, Invariant($"PDG J{j + 1} {planet.Key} {payload} kg ({poseName}): PM = {b.PhaseMarginDeg:F2}°"));
+                            }
+                        }
+                    }
+                }
+            }
+
+            output.WriteLine(Invariant($"{law,-4}: max ρ = {maxRho:F6}; min GM = [{string.Join(", ", minGm.Select(x => x.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)))}] dB (min |GM| = [{string.Join(", ", minAbsGm.Select(x => x.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)))}] dB); min PM = [{string.Join(", ", minPm.Select(x => x.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)))}]°"));
+
+            for (var j = 0; j < 4; j++)
+            {
+                if (law == "PDG")
+                {
+                    Assert.True(minGm[j] >= 2.6);
+                    Assert.True(minPm[j] >= 37.0);
+                }
+                else if (law == "PID")
+                {
+                    Assert.True(minAbsGm[j] >= 1.0);
+                    Assert.True(minPm[j] >= 10.9);
+                }
+                else if (law == "CT")
+                {
+                    Assert.True(minGm[j] >= 0.34);
+                    Assert.True(minPm[j] >= 10.3);
+                }
+            }
         }
     }
 

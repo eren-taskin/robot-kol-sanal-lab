@@ -113,11 +113,11 @@ public sealed class ComputedTorque : IController, IAugmentedLinearisableControll
     public ReadOnlySpan<double> Integral => _integral;
 
     /// <summary>Default optional Ki, 1/s³. SPEC §7.</summary>
-    public static IReadOnlyList<double> DefaultIntegralGains { get; } = Array.AsReadOnly(new[] { 6400.0, 6400.0, 6400.0, 6400.0 });
+    public static IReadOnlyList<double> DefaultIntegralGains { get; } = Array.AsReadOnly(new[] { 10000.0, 10000.0, 10000.0, 10000.0 });
 
-    /// <summary>PD gains tuned with DefaultIntegralGains for the CT+I robustness option: Kp=1600 1/s², Kd=80 1/s. SPEC §7.</summary>
+    /// <summary>PD gains tuned with DefaultIntegralGains for the CT+I robustness option: Kp=3600 1/s², Kd=360 1/s. SPEC §7.</summary>
     public static PdGains DefaultIntegralPdGains { get; } = new(
-        [1600.0, 1600.0, 1600.0, 1600.0], [80.0, 80.0, 80.0, 80.0]);
+        [3600.0, 3600.0, 3600.0, 3600.0], [360.0, 360.0, 360.0, 360.0]);
 
     /// <summary>Updates the payload belief at an attachment boundary without resetting the integral or sample history. SPEC §8.3.</summary>
     public void SetPayloadBelief(double payloadKg)

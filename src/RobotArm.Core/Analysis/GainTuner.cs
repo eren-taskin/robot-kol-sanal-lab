@@ -14,11 +14,35 @@ public enum TuningMode
     Shared,
 }
 
-/// <summary>Search space, budget and cost weights of the gain tuner. SPEC §12.7.</summary>
+/// <summary>How the tuner combines per-run costs across scenarios and sensors. SPEC §12.7.</summary>
+public enum TuningCostAggregation
+{
+    /// <summary>Sum of the per-run costs.</summary>
+    Sum,
+    /// <summary>Largest (worst-case) per-run cost.</summary>
+    Max,
+}
+
+/// <summary>Whether each scenario is evaluated with its own sensor or with both perfect and encoder sensors. SPEC §12.7.</summary>
+public enum TuningSensorMode
+{
+    /// <summary>Use each scenario's <see cref="Scenario.UseEncoder"/> as configured.</summary>
+    Scenario,
+    /// <summary>Evaluate each scenario twice: once with the perfect sensor and once with the encoder.</summary>
+    PerfectAndEncoder,
+}
+
+/// <summary>Search space, budget, robustness options and constraints of the gain tuner. SPEC §12.7.</summary>
 public sealed record GainTunerOptions
 {
     /// <summary>Per-joint or shared parameters.</summary>
     public TuningMode Mode { get; init; } = TuningMode.PerJoint;
+
+    /// <summary>How costs across scenarios and sensors are combined (sum or max).</summary>
+    public TuningCostAggregation CostAggregation { get; init; } = TuningCostAggregation.Sum;
+
+    /// <summary>Sensor evaluation mode (scenario's own sensor, or both perfect and encoder).</summary>
+    public TuningSensorMode Sensor { get; init; } = TuningSensorMode.Scenario;
 
     /// <summary>Lower bound of ωn, rad/s.</summary>
     public double MinNaturalFrequency { get; init; } = 1.0;
@@ -32,7 +56,7 @@ public sealed record GainTunerOptions
     /// <summary>Upper bound of ζ.</summary>
     public double MaxDampingRatio { get; init; } = 10.0;
 
-    /// <summary>Largest number of cost evaluations (nonlinear runs), the baseline included.</summary>
+    /// <summary>Largest number of candidate evaluations, the baseline included.</summary>
     public int MaxEvaluations { get; init; } = 60;
 
     /// <summary>Seed of the generator that spreads the initial simplex.</summary>
@@ -41,7 +65,7 @@ public sealed record GainTunerOptions
     /// <summary>Edge of the initial simplex in the normalised parameter box [0, 1]^d.</summary>
     public double InitialStep { get; init; } = 0.1;
 
-    /// <summary>Added when the run ends in a fault (SPEC §6.4).</summary>
+    /// <summary>Added when a run ends in a fault (SPEC §6.4).</summary>
     public double FaultPenalty { get; init; } = 10.0;
 
     /// <summary>Percentage of time with any controller clamping allowed without penalty.</summary>
@@ -50,31 +74,35 @@ public sealed record GainTunerOptions
     /// <summary>Penalty per percentage point of clamping above <see cref="ClampLimitPercent"/>.</summary>
     public double ClampPenalty { get; init; } = 1e-3;
 
-    /// <summary>Added times ρ when the linearised loop at the start pose has ρ ≥ 1.</summary>
+    /// <summary>Added times ρ when the linearised loop at a start pose has ρ ≥ 1.</summary>
     public double SpectralRadiusPenalty { get; init; } = 10.0;
 
-    /// <summary>Smallest loop-at-a-time phase margin allowed without penalty, degrees.</summary>
-    public double PhaseMarginLimitDeg { get; init; } = 30.0;
+    /// <summary>Minimum loop-at-a-time gain margin required as a hard constraint at each scenario's start pose, dB.</summary>
+    public double GainMarginLimitDb { get; init; } = 6.0;
 
-    /// <summary>Penalty per degree of the smallest phase margin below <see cref="PhaseMarginLimitDeg"/>.</summary>
+    /// <summary>Minimum loop-at-a-time phase margin required as a hard constraint at each scenario's start pose, degrees.</summary>
+    public double PhaseMarginLimitDeg { get; init; } = 40.0;
+
+    /// <summary>Additional slope per degree below <see cref="PhaseMarginLimitDeg"/>.</summary>
     public double PhaseMarginPenalty { get; init; } = 1e-3;
 }
 
-/// <summary>One cost evaluation of the tuner. SPEC §12.7.</summary>
+/// <summary>One candidate evaluation of the tuner. SPEC §12.7.</summary>
 /// <param name="Index">1-based evaluation number (1 is the baseline).</param>
 /// <param name="Kp">Kp per joint, in the controller's unit.</param>
 /// <param name="Kd">Kd per joint.</param>
 /// <param name="NaturalFrequency">ωn per joint, rad/s (the design values the gains came from).</param>
 /// <param name="DampingRatio">ζ per joint.</param>
-/// <param name="Cost">ITAE + penalties.</param>
-/// <param name="Itae">Σ t·|tool − reference tool|·Δt over the log, m·s².</param>
-/// <param name="Faulted">The run ended in a fault.</param>
-/// <param name="ClampedPercent">Time percentage with any controller clamping (SPEC §9).</param>
-/// <param name="SpectralRadius">ρ of the linearised loop at the start pose.</param>
-/// <param name="MinPhaseMarginDeg">Smallest loop-at-a-time phase margin at the start pose, degrees.</param>
+/// <param name="Cost">Combined ITAE + penalties and hard-constraint barriers.</param>
+/// <param name="Itae">Combined Σ t·|tool − reference tool|·Δt over the log, m·s².</param>
+/// <param name="Faulted">Any run ended in a fault.</param>
+/// <param name="ClampedPercent">Largest time percentage with any controller clamping (SPEC §9).</param>
+/// <param name="SpectralRadius">Largest ρ of the linearised loop across scenario start poses.</param>
+/// <param name="MinPhaseMarginDeg">Smallest loop-at-a-time phase margin across scenario start poses, degrees.</param>
+/// <param name="MinGainMarginDb">Smallest loop-at-a-time gain margin across scenario start poses, dB.</param>
 public sealed record GainTunerEvaluation(int Index, IReadOnlyList<double> Kp, IReadOnlyList<double> Kd,
     IReadOnlyList<double> NaturalFrequency, IReadOnlyList<double> DampingRatio, double Cost, double Itae, bool Faulted,
-    double ClampedPercent, double SpectralRadius, double MinPhaseMarginDeg);
+    double ClampedPercent, double SpectralRadius, double MinPhaseMarginDeg, double MinGainMarginDb = double.PositiveInfinity);
 
 /// <summary>Reported after every evaluation. SPEC §12.7.</summary>
 /// <param name="Evaluation">Evaluations done.</param>
@@ -88,37 +116,15 @@ public sealed record GainTunerProgress(int Evaluation, int MaxEvaluations, GainT
 /// <param name="Best">The lowest cost found (possibly the baseline).</param>
 /// <param name="History">Every evaluation, in order.</param>
 /// <param name="Cancelled">The token was cancelled; the result holds what was found until then.</param>
-/// <param name="BestScenario">The scenario with the best gains as explicit overrides.</param>
+/// <param name="BestScenario">The primary scenario with the best gains as explicit overrides.</param>
 public sealed record GainTunerResult(GainTunerEvaluation Baseline, GainTunerEvaluation Best,
     IReadOnlyList<GainTunerEvaluation> History, bool Cancelled, Scenario BestScenario);
 
 /// <summary>
-/// Gain tuning by Nelder–Mead over (ωn, ζ), each evaluation a real nonlinear run of the scenario. SPEC §12.7;
-/// docs/DECISIONS.md D9.
+/// Gain tuning by Nelder–Mead over (ωn, ζ), each evaluation running the nonlinear runner over one or more scenarios
+/// and optionally both sensors, with minimum gain and phase margins enforced as hard constraints at each start pose.
+/// SPEC §12.7; docs/DECISIONS.md D9.
 /// </summary>
-/// <remarks>
-/// <para>
-/// <b>Parameters to gains.</b> CT and CT+I: Kp = ωn², Kd = 2ζωn (the law cancels inertia and friction). PDG and
-/// PID: Kp,i = M̂ii ωn,i², Kd,i = max(0, 2ζi ωn,i M̂ii − d̂i), with M̂ii(q_start) of the controller's own model and
-/// d̂i = fv + fc/ωs, its friction slope: a decoupled single-joint design that ignores the coupling of M and, for PID,
-/// gravity. Ki (PID, CT+I) is kept as in the scenario. The search runs in the box [0, 1]^d, ωn on a logarithmic and
-/// ζ on a linear scale between the bounds; every trial point is clamped to the box.
-/// </para>
-/// <para>
-/// <b>Cost.</b> ITAE = Σ t·|p_tool − p_ref|·Δt over the logged samples (SPEC §9 weights), plus: a fault penalty;
-/// a penalty per percentage point of controller clamping above a limit; a penalty times ρ when the loop linearised at
-/// the start pose (<see cref="SampledLoopModel"/>) has ρ ≥ 1; a penalty per degree of the smallest loop-at-a-time
-/// phase margin below a limit (<see cref="LoopFrequencyResponse"/>). The linear terms are evaluated at the start
-/// pose only.
-/// </para>
-/// <para>
-/// <b>Search.</b> Evaluation 1 is the scenario's own gains. The simplex starts at their (ωn, ζ) (clamped to the
-/// bounds; if that reproduces the gains, evaluation 1 is reused), with edges of <see cref="GainTunerOptions.InitialStep"/>
-/// spread ±25 % by a seeded generator, so a run is deterministic. Standard coefficients: reflection 1, expansion 2,
-/// contraction ½, shrink ½. It stops at the evaluation budget, when the simplex is smaller than 1e-6, or when the
-/// token is cancelled (checked between runs and every 0.25 s of simulated time).
-/// </para>
-/// </remarks>
 public static class GainTuner
 {
     private const double ChunkSeconds = 0.25;
@@ -130,23 +136,44 @@ public static class GainTuner
         Action<GainTunerProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(scenario);
-        scenario.Validate();
+        return Tune([scenario], options, progress, cancellationToken);
+    }
+
+    /// <summary>Tunes the PD gains across a list of <paramref name="scenarios"/>. SPEC §12.7.</summary>
+    /// <exception cref="ArgumentException"><paramref name="scenarios"/> is empty.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The options are invalid.</exception>
+    public static GainTunerResult Tune(IReadOnlyList<Scenario> scenarios, GainTunerOptions? options = null,
+        Action<GainTunerProgress>? progress = null, CancellationToken cancellationToken = default)
+    {
+        ValidateScenarios(scenarios);
         options ??= new GainTunerOptions();
         Validate(options);
 
-        var design = new Design(scenario, options);
+        var primary = scenarios[0];
+        var design = new Design(primary, options);
         var history = new List<GainTunerEvaluation>();
         GainTunerEvaluation? best = null;
         var cancelled = false;
+
+        bool IsFeasible(GainTunerEvaluation e) =>
+            !e.Faulted && e.SpectralRadius < 1.0 && e.MinGainMarginDb >= options.GainMarginLimitDb && e.MinPhaseMarginDeg >= options.PhaseMarginLimitDeg;
+
+        bool IsBetter(GainTunerEvaluation candidate, GainTunerEvaluation incumbent)
+        {
+            var cf = IsFeasible(candidate);
+            var incf = IsFeasible(incumbent);
+            if (cf != incf) return cf;
+            return candidate.Cost < incumbent.Cost;
+        }
 
         GainTunerEvaluation Run(double[] kp, double[] kd, double[] wn, double[] zeta)
         {
             if (history.Count >= options.MaxEvaluations) throw new BudgetExhausted();
             if (cancellationToken.IsCancellationRequested) { cancelled = true; throw new BudgetExhausted(); }
-            var evaluation = Evaluate(scenario, kp, kd, wn, zeta, history.Count + 1, options, cancellationToken)
+            var evaluation = Evaluate(scenarios, kp, kd, wn, zeta, history.Count + 1, options, cancellationToken)
                 ?? throw new CancelledDuringRun();
             history.Add(evaluation);
-            if (best is null || evaluation.Cost < best.Cost) best = evaluation;
+            if (best is null || IsBetter(evaluation, best)) best = evaluation;
             progress?.Invoke(new GainTunerProgress(history.Count, options.MaxEvaluations, evaluation, best));
             return evaluation;
         }
@@ -179,9 +206,9 @@ public static class GainTuner
         catch (CancelledDuringRun) { cancelled = true; }
 
         var winner = best!;
-        var bestScenario = scenario with
+        var bestScenario = primary with
         {
-            Controller = scenario.Controller with { Kp = JointVector.From(winner.Kp.ToArray()), Kd = JointVector.From(winner.Kd.ToArray()) }
+            Controller = primary.Controller with { Kp = JointVector.From(winner.Kp.ToArray()), Kd = JointVector.From(winner.Kd.ToArray()) }
         };
         return new GainTunerResult(baseline, winner, history.AsReadOnly(), cancelled, bestScenario);
     }
@@ -190,52 +217,130 @@ public static class GainTuner
     public static GainTunerEvaluation Evaluate(Scenario scenario, GainTunerOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(scenario);
-        scenario.Validate();
-        options ??= new GainTunerOptions();
-        Validate(options);
-        var design = new Design(scenario, options);
-        var (kp, kd) = design.ScenarioGains();
-        var d = design.ToDesign(kp, kd);
-        return Evaluate(scenario, kp, kd, d.Wn, d.Zeta, 1, options, CancellationToken.None)!;
+        return Evaluate([scenario], options);
     }
 
-    private static GainTunerEvaluation? Evaluate(Scenario scenario, double[] kp, double[] kd, double[] wn, double[] zeta,
+    /// <summary>The tuner's cost of <paramref name="scenarios"/> with the primary scenario's gains, as evaluation 1 would compute it. SPEC §12.7.</summary>
+    public static GainTunerEvaluation Evaluate(IReadOnlyList<Scenario> scenarios, GainTunerOptions? options = null)
+    {
+        ValidateScenarios(scenarios);
+        options ??= new GainTunerOptions();
+        Validate(options);
+        var design = new Design(scenarios[0], options);
+        var (kp, kd) = design.ScenarioGains();
+        var d = design.ToDesign(kp, kd);
+        return Evaluate(scenarios, kp, kd, d.Wn, d.Zeta, 1, options, CancellationToken.None)!;
+    }
+
+    private static GainTunerEvaluation? Evaluate(IReadOnlyList<Scenario> scenarios, double[] kp, double[] kd, double[] wn, double[] zeta,
         int index, GainTunerOptions options, CancellationToken token)
     {
-        var trial = scenario with
-        {
-            Controller = scenario.Controller with { Kp = JointVector.From(kp), Kd = JointVector.From(kd) }
-        };
-        var runner = new ExperimentRunner();
-        runner.Start(trial);
-        while (!runner.IsFinished)
+        var arm = ArmModel.OpenManipulatorX();
+        var maxRho = 0.0;
+        var minGm = double.PositiveInfinity;
+        var minPm = double.PositiveInfinity;
+
+        foreach (var scenario in scenarios)
         {
             if (token.IsCancellationRequested) return null;
-            runner.AdvanceBy(ChunkSeconds);
+            var linearTrial = scenario with
+            {
+                Controller = scenario.Controller with { Kp = JointVector.From(kp), Kd = JointVector.From(kd) }
+            };
+            var controller = (ILinearisableController)ExperimentRunner.CreateController(linearTrial);
+            var q0 = linearTrial.Task.Start.ToArray();
+            var plantPayload = linearTrial.Task.Kind == TaskKind.PickPlace ? 0.0 : linearTrial.PayloadKg;
+            var model = SampledLoopModel.ForArm(arm, linearTrial.GetPlanet(), plantPayload, q0, controller, linearTrial.SamplePeriod);
+            maxRho = Math.Max(maxRho, LinearAnalysis.ClosedLoopPoles(model).SpectralRadius);
+            for (var i = 0; i < model.InputCount; i++)
+            {
+                var bode = LoopFrequencyResponse.Compute(model, i, MarginPoints);
+                minGm = Math.Min(minGm, bode.GainMarginDb);
+                minPm = Math.Min(minPm, bode.PhaseMarginDeg);
+            }
         }
-        var result = runner.Result!;
-        var itae = 0.0;
-        foreach (var row in result.Log) itae += row.Time * (row.Tool - row.ReferenceTool).Length * row.Interval;
-        var faulted = result.Fault is not null;
-        var clamped = result.Metrics.AnyClampedPercent;
 
-        var controller = (ILinearisableController)ExperimentRunner.CreateController(trial);
-        var q0 = trial.Task.Start.ToArray();
-        var plantPayload = trial.Task.Kind == TaskKind.PickPlace ? 0.0 : trial.PayloadKg;
-        var model = SampledLoopModel.ForArm(ArmModel.OpenManipulatorX(), trial.GetPlanet(), plantPayload, q0, controller, trial.SamplePeriod);
-        var rho = LinearAnalysis.ClosedLoopPoles(model).SpectralRadius;
-        var minPm = double.PositiveInfinity;
-        for (var i = 0; i < model.InputCount; i++)
-            minPm = Math.Min(minPm, LoopFrequencyResponse.Compute(model, i, MarginPoints).PhaseMarginDeg);
+        var hardViolation = 0.0;
+        if (maxRho >= 1.0) hardViolation += options.SpectralRadiusPenalty * maxRho;
+        if (minGm < options.GainMarginLimitDb)
+            hardViolation += Math.Max(options.FaultPenalty, 1.0) + (options.GainMarginLimitDb - minGm);
+        if (minPm < options.PhaseMarginLimitDeg)
+            hardViolation += Math.Max(options.FaultPenalty, 1.0) + (1.0 + options.PhaseMarginPenalty) * (options.PhaseMarginLimitDeg - minPm);
 
-        var cost = itae;
-        if (faulted) cost += options.FaultPenalty;
-        cost += options.ClampPenalty * Math.Max(0.0, clamped - options.ClampLimitPercent);
-        if (rho >= 1.0) cost += options.SpectralRadiusPenalty * rho;
-        if (double.IsFinite(minPm)) cost += options.PhaseMarginPenalty * Math.Max(0.0, options.PhaseMarginLimitDeg - minPm);
+        if (index > 1 && hardViolation > 0.0)
+        {
+            return new GainTunerEvaluation(index, Array.AsReadOnly(kp), Array.AsReadOnly(kd), Array.AsReadOnly(wn), Array.AsReadOnly(zeta),
+                hardViolation, 0.0, false, 0.0, maxRho, minPm, minGm);
+        }
+
+        var aggRunCost = 0.0;
+        var aggItae = 0.0;
+        var anyFaulted = false;
+        var maxClamped = 0.0;
+
+        foreach (var scenario in scenarios)
+        {
+            var sensors = options.Sensor == TuningSensorMode.PerfectAndEncoder
+                ? new[] { false, true }
+                : new[] { scenario.UseEncoder };
+            foreach (var useEncoder in sensors)
+            {
+                var trial = scenario with
+                {
+                    UseEncoder = useEncoder,
+                    Controller = scenario.Controller with { Kp = JointVector.From(kp), Kd = JointVector.From(kd) }
+                };
+                var runner = new ExperimentRunner();
+                runner.Start(trial);
+                while (!runner.IsFinished)
+                {
+                    if (token.IsCancellationRequested) return null;
+                    runner.AdvanceBy(ChunkSeconds);
+                }
+                var result = runner.Result!;
+                var runItae = 0.0;
+                foreach (var row in result.Log) runItae += row.Time * (row.Tool - row.ReferenceTool).Length * row.Interval;
+                var runFaulted = result.Fault is not null;
+                var runClamped = result.Metrics.AnyClampedPercent;
+                var runCost = runItae;
+                if (runFaulted) runCost += options.FaultPenalty;
+                runCost += options.ClampPenalty * Math.Max(0.0, runClamped - options.ClampLimitPercent);
+
+                if (options.CostAggregation == TuningCostAggregation.Max)
+                {
+                    aggRunCost = Math.Max(aggRunCost, runCost);
+                    aggItae = Math.Max(aggItae, runItae);
+                }
+                else
+                {
+                    aggRunCost += runCost;
+                    aggItae += runItae;
+                }
+                anyFaulted |= runFaulted;
+                maxClamped = Math.Max(maxClamped, runClamped);
+            }
+        }
+
+        var cost = aggRunCost;
+        if (maxRho >= 1.0) cost += options.SpectralRadiusPenalty * maxRho;
+        if (minGm < options.GainMarginLimitDb)
+            cost += Math.Max(options.FaultPenalty, 1.0) + (options.GainMarginLimitDb - minGm);
+        if (minPm < options.PhaseMarginLimitDeg)
+            cost += Math.Max(options.FaultPenalty, 1.0) + (1.0 + options.PhaseMarginPenalty) * (options.PhaseMarginLimitDeg - minPm);
 
         return new GainTunerEvaluation(index, Array.AsReadOnly(kp), Array.AsReadOnly(kd), Array.AsReadOnly(wn), Array.AsReadOnly(zeta),
-            cost, itae, faulted, clamped, rho, minPm);
+            cost, aggItae, anyFaulted, maxClamped, maxRho, minPm, minGm);
+    }
+
+    private static void ValidateScenarios(IReadOnlyList<Scenario> scenarios)
+    {
+        ArgumentNullException.ThrowIfNull(scenarios);
+        if (scenarios.Count == 0) throw new ArgumentException("At least one scenario is required.", nameof(scenarios));
+        foreach (var s in scenarios)
+        {
+            ArgumentNullException.ThrowIfNull(s);
+            s.Validate();
+        }
     }
 
     /// <summary>Nelder–Mead on [0, 1]^d with clamping; the cost function throws to stop it.</summary>
@@ -336,8 +441,10 @@ public static class GainTuner
             throw new ArgumentOutOfRangeException(nameof(o), "Initial step must be in (0, 0.5].");
         foreach (var w in new[] { o.FaultPenalty, o.ClampPenalty, o.SpectralRadiusPenalty, o.PhaseMarginPenalty, o.ClampLimitPercent })
             if (!double.IsFinite(w) || w < 0.0) throw new ArgumentOutOfRangeException(nameof(o), "Weights and limits must be finite and at least 0.");
-        if (!double.IsFinite(o.PhaseMarginLimitDeg))
-            throw new ArgumentOutOfRangeException(nameof(o), "The phase margin limit must be finite.");
+        if (!double.IsFinite(o.GainMarginLimitDb) || !double.IsFinite(o.PhaseMarginLimitDeg))
+            throw new ArgumentOutOfRangeException(nameof(o), "The gain and phase margin limits must be finite.");
+        if (!Enum.IsDefined(o.Mode) || !Enum.IsDefined(o.CostAggregation) || !Enum.IsDefined(o.Sensor))
+            throw new ArgumentOutOfRangeException(nameof(o), "Invalid enum option.");
     }
 
     private sealed class BudgetExhausted : Exception;
