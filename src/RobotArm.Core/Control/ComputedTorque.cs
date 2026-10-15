@@ -29,7 +29,7 @@ namespace RobotArm.Core.Control;
 /// </para>
 /// <para>Kp is in 1/s² and Kd in 1/s. <see cref="Compute"/> does not allocate.</para>
 /// </remarks>
-public sealed class ComputedTorque : IController, ILinearisableController
+public sealed class ComputedTorque : IController, IAugmentedLinearisableController
 {
     private readonly int _n;
     private readonly double[] _kp;
@@ -105,6 +105,9 @@ public sealed class ComputedTorque : IController, ILinearisableController
 
     /// <summary>Whether CT+I is enabled. Off by default. SPEC §7.</summary>
     public bool IntegralEnabled { get; }
+
+    /// <summary>Ki per joint, 1/s³; all zero when <see cref="IntegralEnabled"/> is false. SPEC §7.</summary>
+    public IReadOnlyList<double> IntegralGains => Array.AsReadOnly((double[])_ki.Clone());
 
     /// <summary>Integral error per joint, rad·s. SPEC §7.</summary>
     public ReadOnlySpan<double> Integral => _integral;
@@ -193,19 +196,57 @@ public sealed class ComputedTorque : IController, ILinearisableController
     {
         GainCheck.CheckGainMatrix(_n, q0, samplePeriod, k);
         var ts = PredictHalfSample ? samplePeriod : 0.0;
-        var m = new double[_n * _n];
-        _dynamics.InertiaMatrix(q0, m);
-        var gradient = Belief.GravityGradient(q0);
+        var p = PredictionInertia(q0, ts, out var gradient);
         var width = 2 * _n;
         for (var i = 0; i < _n; i++)
         {
             var d = _viscousFriction[i] + _coulombFriction[i] / _smoothingSpeed[i];
             for (var j = 0; j < _n; j++)
             {
-                var p = m[i * _n + j] + gradient[i * _n + j] * ts * ts / 8.0 + (i == j ? d * ts / 2.0 : 0.0);
-                k[i * width + j] = p * _kp[j] - gradient[i * _n + j];
-                k[i * width + _n + j] = p * _kd[j] - gradient[i * _n + j] * ts / 2.0 - (i == j ? d : 0.0);
+                k[i * width + j] = p[i * _n + j] * _kp[j] - gradient[i * _n + j];
+                k[i * width + _n + j] = p[i * _n + j] * _kd[j] - gradient[i * _n + j] * ts / 2.0 - (i == j ? d : 0.0);
             }
         }
+    }
+
+    /// <summary>True when CT+I is enabled. SPEC §12.2.</summary>
+    public bool HasIntegral => IntegralEnabled;
+
+    /// <summary>
+    /// L = P diag(Kp), with P of <see cref="LinearFeedbackGain"/>: a step of q_d changes a by Kp δr, and a enters
+    /// u through M̂ and through the predicted state. SPEC §12.2; docs/DECISIONS.md D9.
+    /// </summary>
+    public void LinearReferenceGain(ReadOnlySpan<double> q0, double samplePeriod, Span<double> l) =>
+        PredictionTimesDiagonal(q0, samplePeriod, l, _kp);
+
+    /// <summary>
+    /// Kz = P diag(Ki) (zero without CT+I): the integral enters u through a, like the reference. The integral
+    /// itself always uses the elapsed sample time, even when the prediction is off. SPEC §12.2; docs/DECISIONS.md D9.
+    /// </summary>
+    public void LinearIntegralGain(ReadOnlySpan<double> q0, double samplePeriod, Span<double> kz) =>
+        PredictionTimesDiagonal(q0, samplePeriod, kz, _ki);
+
+    private void PredictionTimesDiagonal(ReadOnlySpan<double> q0, double samplePeriod, Span<double> m, double[] diagonal)
+    {
+        GainCheck.CheckSquareMatrix(_n, q0, samplePeriod, m);
+        var p = PredictionInertia(q0, PredictHalfSample ? samplePeriod : 0.0, out _);
+        for (var i = 0; i < _n; i++)
+            for (var j = 0; j < _n; j++)
+                m[i * _n + j] = p[i * _n + j] * diagonal[j];
+    }
+
+    /// <summary>P = M̂(q0) + Ĝ ts²/8 + D̂ ts/2, n × n row-major; also returns Ĝ. Allocates.</summary>
+    private double[] PredictionInertia(ReadOnlySpan<double> q0, double ts, out double[] gradient)
+    {
+        var p = new double[_n * _n];
+        _dynamics.InertiaMatrix(q0, p);
+        gradient = Belief.GravityGradient(q0);
+        for (var i = 0; i < _n; i++)
+        {
+            var d = _viscousFriction[i] + _coulombFriction[i] / _smoothingSpeed[i];
+            for (var j = 0; j < _n; j++)
+                p[i * _n + j] += gradient[i * _n + j] * ts * ts / 8.0 + (i == j ? d * ts / 2.0 : 0.0);
+        }
+        return p;
     }
 }

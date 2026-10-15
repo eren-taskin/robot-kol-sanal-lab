@@ -8,7 +8,7 @@ namespace RobotArm.Core.Control;
 /// e = q_d − q, ė = q̇_d − q̇, ĝ from the controller's belief (SPEC §5.6). SPEC §7.
 /// </summary>
 /// <remarks><see cref="Compute"/> does not allocate.</remarks>
-public sealed class PdGravity : IController, ILinearisableController
+public sealed class PdGravity : IController, IAugmentedLinearisableController
 {
     private readonly int _n;
     private readonly double[] _kp;
@@ -104,5 +104,26 @@ public sealed class PdGravity : IController, ILinearisableController
             k[i * 2 * _n + i] += _kp[i];
             k[i * 2 * _n + _n + i] = _kd[i];
         }
+    }
+
+    /// <summary>False: PDG has no integral. SPEC §12.2.</summary>
+    public bool HasIntegral => false;
+
+    /// <summary>
+    /// L = diag(Kp): ĝ depends on the measured q, not on q_d, so the reference enters only through e.
+    /// SPEC §12.2; docs/DECISIONS.md D9.
+    /// </summary>
+    public void LinearReferenceGain(ReadOnlySpan<double> q0, double samplePeriod, Span<double> l)
+    {
+        GainCheck.CheckSquareMatrix(_n, q0, samplePeriod, l);
+        l.Clear();
+        for (var i = 0; i < _n; i++) l[i * _n + i] = _kp[i];
+    }
+
+    /// <summary>Kz = 0. SPEC §12.2.</summary>
+    public void LinearIntegralGain(ReadOnlySpan<double> q0, double samplePeriod, Span<double> kz)
+    {
+        GainCheck.CheckSquareMatrix(_n, q0, samplePeriod, kz);
+        kz.Clear();
     }
 }

@@ -79,3 +79,36 @@ public interface ILinearisableController
     /// <param name="k">Output: n × 2n gain matrix, row-major.</param>
     void LinearFeedbackGain(ReadOnlySpan<double> q0, double samplePeriod, Span<double> k);
 }
+
+/// <summary>
+/// A linearisable controller that also states how the reference and an optional integral enter its law, so the
+/// sampled closed loop can be built with a reference input and integrator states. SPEC §12.2;
+/// docs/DECISIONS.md D9.
+/// </summary>
+/// <remarks>
+/// Linearised at rest at q0 with the constant reference q_d = q0 + δr, the law is
+/// <code>
+/// δu_k = −K x_k + L δr + Kz w_k,   w_k = w_{k−1} + Ts (δr − δq_k)
+/// </code>
+/// with x = [δq; δq̇], K from <see cref="ILinearisableController.LinearFeedbackGain"/> (the PD part), and w the
+/// deviation of the rectangle-sum integral ∫e dt from the value that holds the equilibrium. Clamping and the
+/// conditional integration are left out (they are not linear), and every sample is taken Ts after the previous one
+/// (the first sample after a reset, with Δt = 0, is not modelled).
+/// </remarks>
+public interface IAugmentedLinearisableController : ILinearisableController
+{
+    /// <summary>Whether the law has an integral, so the linear model has n integrator states. SPEC §12.2.</summary>
+    bool HasIntegral { get; }
+
+    /// <summary>Writes L (n × n, row-major): δu = L δr for a step δr of the constant reference. SPEC §12.2.</summary>
+    /// <param name="q0">The pose, rad.</param>
+    /// <param name="samplePeriod">Ts, s.</param>
+    /// <param name="l">Output: n × n, row-major.</param>
+    void LinearReferenceGain(ReadOnlySpan<double> q0, double samplePeriod, Span<double> l);
+
+    /// <summary>Writes Kz (n × n, row-major), the gain on the integral state w; zero without an integral. SPEC §12.2.</summary>
+    /// <param name="q0">The pose, rad.</param>
+    /// <param name="samplePeriod">Ts, s.</param>
+    /// <param name="kz">Output: n × n, row-major.</param>
+    void LinearIntegralGain(ReadOnlySpan<double> q0, double samplePeriod, Span<double> kz);
+}

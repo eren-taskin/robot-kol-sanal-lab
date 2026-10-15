@@ -470,4 +470,102 @@ Added in T08:
 | V34 | CT+I conditional integration, reset, payload-update state preservation, off-by-default regression; normal runner steps including logging allocate nothing | §7, §10 |
 | V35 | Report category (excluded from CI): 160-run informed robustness CSV and Release 10 s Earth PickPlace CT wall-clock measurement | §9 |
 
+Added in A1 (linear analysis, §12):
+
+| # | Test | Source |
+|---|---|---|
+| V36 | Eigenvalues: diagonal, companion matrix of 9 known roots [1e-9], rotation block (exact conjugate pair), 16 × 16 similarity V D V⁻¹ [1e-10]; on 50 random 12 × 12 matrices Σλ = trace [1e-12·‖A‖F] and Πλ = det [1e-9 relative]; max \|λ\| equals the §6.3 spectral radius on the arm for PID, PDG, CT × every planet × 0, 0.5 kg × poses A, B, C [1e-9] | §12.1 |
+| V37 | Closed-loop model: 8 poles for PDG and CT, 12 for PID and CT+I; ρ equals §6.3 for the PD-type laws [1e-9]; for a 1e-6 step and offset the augmented model reproduces each controller's own `Compute` driving x_{k+1} = Φx + Γ(u − u0) over 200 samples [1e-3 of the signal]; s = ln(z)/Ts round trip | §12.2 |
+| V38 | Root locus: 1-DOF mass–spring–damper with sampled PD, poles equal the roots of the closed-form characteristic polynomial [1e-12] and the critical scale factor equals the Jury closed form [1e-8 relative], also with Φ, Γ by RK4 sub-steps; on the arm, tracks are continuous (relative pole step ≤ 0.05) and each crossing separates ρ < 1 from ρ > 1 at ±1e-6 | §12.3 |
+| V39 | Frequency response: 1-DOF L(e^{jωTs}) equals the analytic discrete loop [1e-9 dB, 1e-7°]; gain margin (dB) = 20·log10 of the critical scale factor of V38 [1e-6 dB]; \|L(ω_gc)\| = 1; on the arm (PDG, CT+I) L is real and negative at ω_pc, and scaling joint i's row of K_ξ by the gain margin puts ρ on 1 [1e-6] | §12.4 |
+| V40 | Linear step response against the nonlinear run, 0.01 rad on every joint at the start pose of "Dünya – boş kol – noktaya git": CT and CT+I agree within 2 % of the step; PDG agrees within 2 % with the friction replaced by its slope and at 0.003 rad, and within 5 % at 0.01 rad on the true plant (friction band, D9); 0.5 rad reported; linear PDG ends at q0 + δr [1e-8] | §12.5 |
+| V41 | LQR: scalar DARE against its closed form [1e-12]; arm DARE residual < 1e-9 and LQR loop stable on every planet × 0, 0.5 kg × poses A, B, C; the projection is the diagonal of K | §12.6 |
+| V42 | Gain tuner on "Dünya – boş kol – noktaya git", per-joint (ωn, ζ), 60 evaluations: best cost ≤ the default gains' cost, evaluation 1 is the default gains; same seed gives the same history; cancellation returns the evaluations done | §12.7 |
+| V43 | Report category (excluded from CI): every analysis call on the arm (except the tuner) takes less than 50 ms natively, median of 7 warm calls | §12.8 |
+
 Optional V20: cross-check against MuJoCo using the same URDF and the same torque input (Python, outside the C# solution).
+
+## 12. Linear analysis
+
+A toolkit in `RobotArm.Core/Analysis` (task A1) for the student to study the sampled loop as a linear system: poles, root locus, frequency response, a linear step response to overlay on a run, LQR, and a gain tuner. It uses the linearisation of §6.3 (`LinearSystem.ArmAtRest`, Φ and Γ by RK4 sub-steps, the effective gains of §7). No package is used; `System.Numerics.Complex` is. The calls allocate; they are analysis, not once per step. Decisions and measurements are in `docs/DECISIONS.md` D9.
+
+**What is approximated** (everything here, for the arm). One pose q0, at rest; friction replaced by its slope at q̇ = 0, d = fv + fc/ωs (valid only for |q̇| well below ωs = 0.1 rad/s); gravity by its gradient G; Coriolis terms dropped (quadratic in q̇); no saturation or clamping, no conditional integration; a perfect sensor (no quantisation, noise or filter); every sample exactly Ts after the previous one.
+
+### 12.1 Eigenvalues
+
+`EigenSolver.Eigenvalues(A, n)`: balancing by powers of 2, reduction to upper Hessenberg form, Francis double-shift QR with deflation (EISPACK hqr). Sorted by decreasing |λ|; complex pairs are exactly conjugate. Used for every pole set below; tested up to 16 × 16.
+
+### 12.2 Closed-loop model and poles
+
+Each controller supplies, besides K of §7 (`IAugmentedLinearisableController`), how a step δr of the constant reference and the integral enter its law, linearised at rest at q0:
+
+```
+δu_k = −K x_k + L δr + Kz w_k,    w_k = w_{k−1} + Ts (δr − δq_k)
+```
+
+| Law | L | Kz |
+|---|---|---|
+| PID | diag(Kp) | diag(Ki) |
+| PDG | diag(Kp) | — |
+| CT | P diag(Kp) | — |
+| CT+I | P diag(Kp) | P diag(Ki) |
+
+with P = M̂ + Ĝ·Ts²/8 + D̂·Ts/2 of §7 (Ts = 0 without the prediction; the integral always uses the elapsed Ts). w is the deviation of ∫e dt from the value that holds the equilibrium (for PID, Ki·∫e = g(q0)).
+
+PD-type laws (PDG, CT): ξ = x, 8 states, ξ_{k+1} = (Φ − ΓK) ξ_k + ΓL δr. With an integral (PID, CT+I): ξ = [x; w_{k−1}], 12 states,
+
+```
+A_ξ = [[Φ, 0], [−Ts S, I]],  B_ξ = [[Γ], [0]],  E_ξ = [[0], [Ts I]],  S = [I 0]
+K_ξ = [K + Ts Kz S, −Kz],    L_ξ = L + Ts Kz
+ξ_{k+1} = (A_ξ − B_ξ K_ξ) ξ_k + (B_ξ L_ξ + E_ξ) δr,    u_k = u0 − K_ξ ξ_k + L_ξ δr
+```
+
+`LinearAnalysis.ClosedLoopPoles(arm, planet, payload, q0, controller, Ts)` returns the z-poles, s = ln(z)/Ts (principal branch, |Im s| ≤ π/Ts), ωn = |s| and ζ = −Re(s)/|s| of each, and ρ = max |z|.
+
+### 12.3 Root locus
+
+`RootLocus.Sweep` varies one parameter on a logarithmic grid: a common factor k on every gain (Kp, Kd, Ki of every joint), or one gain of one joint. A step is split at its geometric midpoint while a pole moves more than 0.05·max(1, |z|); poles are matched between steps by nearest pairs, so each track is continuous. Every sign change of ρ − 1 is bisected on log(value) (relative 1e-10); the first stable-to-unstable crossing is the critical value.
+
+### 12.4 Loop-at-a-time frequency response
+
+The loop of joint i is opened at its input with the other loops closed: A_i = A_ξ − Σ_{j≠i} b_j k_j and L_i(z) = k_i (zI − A_i)⁻¹ b_i at z = e^{jωTs}, ω from 1e-4·π/Ts to the Nyquist frequency π/Ts (included). Returned: magnitude (dB), phase (deg, unwrapped), gain margin at the phase crossover (an odd multiple of −180°) with the smallest |margin|, phase margin at the gain crossover with the smallest margin, both crossover frequencies (bisection), and the number of open-loop poles outside the unit circle (when not 0, the Bode margins alone do not decide stability). The gain margin is the factor on joint i's whole row of K_ξ (gains, integral and the model terms). For a single loop it equals 20·log10 of the critical scale factor of §12.3. Loop-at-a-time margins do not cover simultaneous changes in several joints.
+
+### 12.5 Linear step response
+
+`LinearStepResponse.Compute` runs ξ_{k+1} = A_cl ξ_k + B_cl δr from ξ0 = 0 for a step δr of the joint reference at t = 0 and returns q, q̇ and δu at every controller sample, like the log rows of §10. It agrees with the nonlinear run for small steps (V40). For PDG the Coulomb friction band limits the range: with a 0.01 rad step on every joint the yaw joint reaches 0.12 rad/s > ωs and the prediction is off by 3.3 %; at 0.003 rad it is 0.3 %, and 0.08 % with the friction replaced by its slope. CT cancels friction and inertia and stays close to linear (0.3 % at 0.01 rad, 1.9 % at 0.5 rad).
+
+### 12.6 Discrete LQR
+
+`DiscreteLqr` solves the DARE P = ΦᵀPΦ − ΦᵀPΓ(R + ΓᵀPΓ)⁻¹ΓᵀPΦ + Q for diagonal Q (positions, velocities) and R by structure-preserving doubling, then two plain Riccati iterations, and returns the 4 × 8 gain K = (R + ΓᵀPΓ)⁻¹ΓᵀPΦ, the poles of Φ − ΓK, the relative residual, and the diagonal projection Kp,i = K[i, i], Kd,i = K[i, 4 + i] with the poles and ρ of Φ − Γ[diag(Kp) | diag(Kd)] (the same plant under an independent-joint PD), so the student sees what the decentralised structure loses.
+
+### 12.7 Gain tuner
+
+`GainTuner.Tune(scenario, options, progress, token)`: Nelder–Mead over per-joint (ωn, ζ) or one shared pair, bounded (ωn on a log scale, ζ linear, trial points clamped to the box), seeded and deterministic. Gains from (ωn, ζ): CT and CT+I Kp = ωn², Kd = 2ζωn; PDG and PID Kp = M̂ii ωn², Kd = max(0, 2ζωn M̂ii − d̂i) with M̂ii at the start pose of the controller's own model; Ki is kept. Each evaluation runs the real nonlinear `ExperimentRunner`. Cost = ITAE Σ t·|p_tool − p_ref|·Δt plus user-weighted penalties: a fault; percentage of time with controller clamping above a limit; ρ ≥ 1 of the loop linearised at the start pose; the smallest loop-at-a-time phase margin below a limit. Evaluation 1 is the scenario's own gains. Budget (default 60 evaluations), a cancellation token (checked between runs and every 0.25 s of simulated time) and a progress callback after every evaluation.
+
+### 12.8 Speed
+
+Each call on the arm takes less than 50 ms natively, the tuner excepted (V43). Measured (Release, Apple Silicon, median of 7 warm calls): eigenvalues of a 12 × 12 matrix 0.05 ms; closed-loop poles 3.4–3.5 ms (mostly the discretisation); root locus 20–32 ms; frequency response of one loop, 400 points, 3.9–5.5 ms; step response over 2 s 3.9 ms; LQR 3.8 ms. One tuner evaluation of the 10 s reach takes about 70 ms in Release and 1.5 s in Debug.
+
+### 12.9 Default PDG gains, Earth, start pose of "Dünya – boş kol – noktaya git"
+
+q0 = [0, −0.4, −0.3, 1.1] rad, no payload, Ts = 2 ms. ρ = 0.984494.
+
+| z | ωn (rad/s) | ζ |
+|---|---|---|
+| 0.984494 | 7.81 | 1 |
+| 0.982959 | 8.59 | 1 |
+| 0.975141 | 12.59 | 1 |
+| 0.968845 | 15.83 | 1 |
+| 0.945996 | 27.76 | 1 |
+| 0.641218 | 222.2 | 1 |
+| 0.535141 | 312.6 | 1 |
+| −0.358365 | 1652 (s = −513 + 1571j) | 0.31 |
+
+| Joint | Gain margin | ω_pc | Phase margin | ω_gc | Open-loop unstable poles |
+|---|---|---|---|---|---|
+| 1 | 18.34 dB | 1571 rad/s (Nyquist) | 115.3° | 90.9 rad/s | 0 |
+| 2 | 16.34 dB | 1571 rad/s | 101.7° | 36.4 rad/s | 1 |
+| 3 | 10.70 dB | 1571 rad/s | 120.5° | 42.3 rad/s | 1 |
+| 4 | 12.64 dB | 1571 rad/s | 102.6° | 9.75 rad/s | 0 |
+
+Critical scale factor on all gains: k = 2.3279 (7.34 dB), smaller than every loop-at-a-time margin: raising every joint's gains together is less safe than raising one. With loop 2 or 3 opened, the others closed, the arm has one unstable pole (gravity), so for those joints the Bode margins are read with the Nyquist criterion.

@@ -84,12 +84,8 @@ public sealed class ExperimentRunner
         var plant = new ArmPlant(model, planet); plant.SetPayload(payload);
         var state = new double[8]; scenario.Task.Start.CopyTo(state);
         _simulation = new Sim(plant, new Rk4Solver(8), state);
-        var scale = scenario.Belief.MassScale;
-        var believedModel = scale == 1 ? model : new ArmModel(model.Joints,
-            model.Bodies.Select(b => new BodyParameters(b.Mass * scale, b.CenterOfMass, scale * b.Inertia)), model.ToolPoint, model.Actuators);
         _beliefPayload = scenario.Belief.PayloadKg ?? payload;
-        var belief = new ControllerBelief(believedModel, scenario.Belief.Gravity is double g ? Planet.Custom(g) : planet, _beliefPayload);
-        _controller = CreateController(scenario.Controller, belief);
+        _controller = CreateController(scenario);
         _sensor = scenario.UseEncoder ? new EncoderSensor(model, new EncoderSensorOptions
         { Seed = scenario.Seed, NoiseStdDev = scenario.NoiseStdDev, FilterTimeConstant = scenario.FilterTimeConstant }) : new PerfectSensor(4);
         _started = true;
@@ -138,6 +134,22 @@ public sealed class ExperimentRunner
 
     /// <summary>Runs the same state machine to completion in one batch. SPEC §8.3.</summary>
     public RunResult Run(Scenario scenario) { Start(scenario); AdvanceBy(scenario.Duration); return Result!; }
+
+    /// <summary>
+    /// The controller a run of <paramref name="scenario"/> starts with: its belief (mass scale, g, initial payload)
+    /// and its gains with the law-specific defaults. Shared with the linear analysis (SPEC §12.7). Does not validate.
+    /// </summary>
+    internal static IController CreateController(Scenario scenario)
+    {
+        var model = ArmModel.OpenManipulatorX(); var planet = scenario.GetPlanet();
+        var payload = scenario.Task.Kind == TaskKind.PickPlace ? 0 : scenario.PayloadKg;
+        var scale = scenario.Belief.MassScale;
+        var believedModel = scale == 1 ? model : new ArmModel(model.Joints,
+            model.Bodies.Select(b => new BodyParameters(b.Mass * scale, b.CenterOfMass, scale * b.Inertia)), model.ToolPoint, model.Actuators);
+        var belief = new ControllerBelief(believedModel, scenario.Belief.Gravity is double g ? Planet.Custom(g) : planet,
+            scenario.Belief.PayloadKg ?? payload);
+        return CreateController(scenario.Controller, belief);
+    }
 
     private static IController CreateController(ControllerSettings c, ControllerBelief belief)
     {

@@ -13,7 +13,7 @@ namespace RobotArm.Core.Control;
 /// </para>
 /// <para>No gravity model: the integral term has to take up the gravity torque. <see cref="Compute"/> does not allocate.</para>
 /// </remarks>
-public sealed class Pid : IController, ILinearisableController
+public sealed class Pid : IController, IAugmentedLinearisableController
 {
     private readonly int _n;
     private readonly double[] _kp;
@@ -125,5 +125,23 @@ public sealed class Pid : IController, ILinearisableController
             k[i * 2 * _n + i] = _kp[i];
             k[i * 2 * _n + _n + i] = _kd[i];
         }
+    }
+
+    /// <summary>Always true: the linear model keeps the n integrator states, even where Ki = 0. SPEC §12.2.</summary>
+    public bool HasIntegral => true;
+
+    /// <summary>L = diag(Kp): the reference enters only through e. SPEC §12.2; docs/DECISIONS.md D9.</summary>
+    public void LinearReferenceGain(ReadOnlySpan<double> q0, double samplePeriod, Span<double> l) =>
+        Diagonal(q0, samplePeriod, l, _kp);
+
+    /// <summary>Kz = diag(Ki). SPEC §12.2; docs/DECISIONS.md D9.</summary>
+    public void LinearIntegralGain(ReadOnlySpan<double> q0, double samplePeriod, Span<double> kz) =>
+        Diagonal(q0, samplePeriod, kz, _ki);
+
+    private void Diagonal(ReadOnlySpan<double> q0, double samplePeriod, Span<double> m, double[] diagonal)
+    {
+        GainCheck.CheckSquareMatrix(_n, q0, samplePeriod, m);
+        m.Clear();
+        for (var i = 0; i < _n; i++) m[i * _n + i] = diagonal[i];
     }
 }

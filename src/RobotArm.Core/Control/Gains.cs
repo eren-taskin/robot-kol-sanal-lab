@@ -91,6 +91,16 @@ internal static class GainCheck
                 $"Expected {n} values in q, q̇, the reference and u (SPEC §7)."));
     }
 
+    public static void CheckSquareMatrix(int n, ReadOnlySpan<double> q0, double samplePeriod, Span<double> m)
+    {
+        if (!double.IsFinite(samplePeriod) || samplePeriod < 0.0)
+            throw new ArgumentOutOfRangeException(nameof(samplePeriod), samplePeriod, "Sample period must be a finite number of at least 0 s.");
+        if (q0.Length != n)
+            throw new ArgumentException(string.Create(CultureInfo.InvariantCulture, $"Expected {n} joint angles, got {q0.Length}."), nameof(q0));
+        if (m.Length != n * n)
+            throw new ArgumentException(string.Create(CultureInfo.InvariantCulture, $"Expected room for {n * n} gains, got {m.Length}."), nameof(m));
+    }
+
     public static void CheckGainMatrix(int n, ReadOnlySpan<double> q0, double samplePeriod, Span<double> k)
     {
         if (!double.IsFinite(samplePeriod) || samplePeriod < 0.0)
