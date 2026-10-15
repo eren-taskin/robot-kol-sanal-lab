@@ -121,7 +121,7 @@ Course rule (Lecture Note 1, §8): every member must be able to explain and defe
 | T08 | Trajectories, tasks, scenario, metrics, logging | Claude Code | done |
 | T09 | Web: layout, run loop, arm drawing | Antigravity | done |
 | T09-aot | WebAssembly AOT for Release publish, measured (D10) | Claude Code | done |
-| T10 | Web: plots, metrics, comparison, export | Antigravity | not started |
+| T10 | Web: plots, metrics, comparison, export | Antigravity | done |
 | T11 | Publish to GitHub Pages | Claude Code | not started |
 | T10b | Kendi kontrolcün (student-written controller) | — | not started |
 | T12 | Experiments for the report | conductor + team | not started |

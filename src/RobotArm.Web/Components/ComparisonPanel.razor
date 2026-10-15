@@ -1,0 +1,111 @@
+@namespace RobotArm.Web.Components
+
+@* Run comparison (T10 item 3): up to four finished runs, one signal overlaid, metrics side by side. *@
+
+<section class="panel-card comparison-panel" id="comparison-panel">
+    <div class="panel-header">
+        <h2>Koşu Karşılaştırma (en çok @RunHistory.Capacity)</h2>
+        @if (Runs.Count > 0)
+        {
+            <div class="analysis-toolbar">
+                <label class="field-label" for="compare-signal">Sinyal</label>
+                <select id="compare-signal" class="form-input compare-select" value="@_signal" @onchange="OnSignalChanged">
+                    @foreach (var s in RunPlots.CompareSignals)
+                    {
+                        <option value="@s.Key">@s.Label</option>
+                    }
+                </select>
+                <button type="button" class="btn-run" id="btn-compare-clear" disabled="@IsRunning" @onclick="OnClear">Tümünü kaldır</button>
+            </div>
+        }
+    </div>
+
+    @if (Runs.Count == 0)
+    {
+        <p class="muted-note">Bir deney bitince "＋ Karşılaştırmaya ekle" ile buraya ekleyin. Örneğin "Yanlış model – CT" ile "Yanlış model düzeltildi – CT+I" koşularını ekleyip "Eklem 4 hatası" sinyalini seçin.</p>
+    }
+    else
+    {
+        @if (_spec is not null)
+        {
+            <Plot Spec="_spec" Height="280" />
+        }
+
+        <div class="table-scroll">
+            <table class="readout-table compare-table" id="compare-table">
+                <thead>
+                    <tr>
+                        <th>Metrik</th>
+                        @foreach (var r in Runs)
+                        {
+                            <th>
+                                <span class="compare-swatch" style="background:@r.Color"></span>#@r.Id @r.Label
+                                <button type="button" class="btn-x" title="Kaldır" disabled="@IsRunning" @onclick="() => OnRemove.InvokeAsync(r.Id)">✕</button>
+                            </th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td>Kontrolcü · gezegen · yük</td>@foreach (var r in Runs) { <td>@ControllerText(r.Scenario) · @r.Scenario.PlanetKey · @LabFormat.Fixed(r.Scenario.PayloadKg, 2) kg</td> }</tr>
+                    <tr><td>Sonuç</td>@foreach (var r in Runs) { <td class="@(r.Result.Success ? "text-ok" : "text-danger")">@(r.Result.Success ? "Başarılı" : "Başarısız")</td> }</tr>
+                    <tr><td>Neden</td>@foreach (var r in Runs) { <td class="reason-cell">@(r.Result.Success ? "—" : LabState.TranslateFailureOrFault(r.Result))</td> }</tr>
+                    <tr><td>Yerleşme zamanı (s)</td>@foreach (var r in Runs) { <td class="mono-cell">@(r.Result.Metrics.SettlingTime is double st ? LabFormat.Fixed(st, 3) : "—")</td> }</tr>
+                    <tr><td>Uç hatası RMS (mm)</td>@foreach (var r in Runs) { <td class="mono-cell">@LabFormat.Fixed(r.Result.Metrics.RmsToolError * 1000, 3)</td> }</tr>
+                    <tr><td>Uç hatası maks. (mm)</td>@foreach (var r in Runs) { <td class="mono-cell">@LabFormat.Fixed(r.Result.Metrics.MaxToolError * 1000, 3)</td> }</tr>
+                    <tr><td>Son uç hatası (mm)</td>@foreach (var r in Runs) { <td class="mono-cell">@LabFormat.Fixed(r.Result.Metrics.FinalToolError * 1000, 3)</td> }</tr>
+                    <tr><td>Aşım (mm)</td>@foreach (var r in Runs) { <td class="mono-cell">@LabFormat.Fixed(r.Result.Metrics.Overshoot * 1000, 3)</td> }</tr>
+                    @for (var j = 0; j < 4; j++)
+                    {
+                        var jj = j;
+                        <tr><td>maks |e@(jj + 1)| (rad)</td>@foreach (var r in Runs) { <td class="mono-cell">@MetricsPanel.Sci(r.Result.Metrics.MaxJointError[jj])</td> }</tr>
+                    }
+                    <tr><td>Tepe |τ| E1..E4 (N·m)</td>@foreach (var r in Runs) { var p = r.Result.Metrics.PeakTorque; <td class="mono-cell">@LabFormat.Fixed(p[0], 2) · @LabFormat.Fixed(p[1], 2) · @LabFormat.Fixed(p[2], 2) · @LabFormat.Fixed(p[3], 2)</td> }</tr>
+                    <tr><td>Kırpma (% zaman)</td>@foreach (var r in Runs) { <td class="mono-cell">@LabFormat.Fixed(r.Result.Metrics.AnyClampedPercent, 1)</td> }</tr>
+                    <tr><td>Mekanik enerji (J)</td>@foreach (var r in Runs) { <td class="mono-cell">@LabFormat.Fixed(r.Result.Metrics.MechanicalEnergy, 3)</td> }</tr>
+                    <tr><td>Simüle süre (s)</td>@foreach (var r in Runs) { <td class="mono-cell">@LabFormat.Fixed(r.Result.Final.Time, 3)</td> }</tr>
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<RunRecord> Runs { get; set; } = [];
+    /// <summary>Changes whenever the list changes, so the overlay is rebuilt only then.</summary>
+    [Parameter] public int Version { get; set; }
+    [Parameter] public bool IsRunning { get; set; }
+    [Parameter] public EventCallback<int> OnRemove { get; set; }
+    [Parameter] public EventCallback OnClear { get; set; }
+
+    private string _signal = "tool";
+    private PlotSpec? _spec;
+    private int _builtVersion = -1;
+    private string _builtSignal = "";
+    private bool _renderedRunning;
+
+    protected override void OnParametersSet()
+    {
+        if (_builtVersion != Version || _builtSignal != _signal)
+        {
+            _builtVersion = Version;
+            _builtSignal = _signal;
+            _spec = Runs.Count == 0 ? null : RunPlots.Compare(Runs, _signal);
+        }
+    }
+
+    protected override bool ShouldRender()
+    {
+        var render = !(IsRunning && _renderedRunning) || _builtVersion != Version;
+        _renderedRunning = IsRunning;
+        return render;
+    }
+
+    private void OnSignalChanged(ChangeEventArgs e)
+    {
+        _signal = e.Value?.ToString() ?? "tool";
+        OnParametersSet();
+    }
+
+    private static string ControllerText(Scenario s) =>
+        s.Controller.Method == ControlMethod.CT && s.Controller.IntegralEnabled ? "CT+I" : s.Controller.Method.ToString();
+}

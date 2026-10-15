@@ -1,0 +1,116 @@
+@namespace RobotArm.Web.Components
+
+@* SPEC §9 metrics of the finished run, with success / failure and the reason (T10 item 2). *@
+
+<section class="panel-card metrics-panel" id="metrics-panel">
+    <div class="panel-header">
+        <h2>Deney Metrikleri (SPEC §9)</h2>
+        @if (Result is not null)
+        {
+            <span class="badge-mini @(Result.Success ? "badge-ok" : Result.Fault is not null ? "badge-danger" : "badge-warning")" id="metrics-outcome">
+                @(Result.Success ? "Başarılı" : Result.Fault is not null ? "Fiziksel hata" : "Başarısız")
+            </span>
+        }
+    </div>
+
+    @if (Result is null)
+    {
+        <p class="muted-note">Metrikler deney bitince kayıttan (log) hesaplanır. Deneyi çalıştırın.</p>
+    }
+    else
+    {
+        var m = Result.Metrics;
+        @if (!Result.Success)
+        {
+            <div class="alert-box @(Result.Fault is not null ? "alert-danger" : "alert-warning")" id="metrics-reason">
+                <strong>Neden:</strong> @LabState.TranslateFailureOrFault(Result)
+            </div>
+        }
+        <div class="kv-grid">
+            <div class="kv-item">
+                <span class="kv-label">Yerleşme zamanı</span>
+                <strong class="kv-value">@(m.SettlingTime is double st ? $"{LabFormat.Fixed(st, 3)} s" : "Yerleşmedi")</strong>
+            </div>
+            <div class="kv-item">
+                <span class="kv-label">Aşım</span>
+                <strong class="kv-value">@LabFormat.Fixed(m.Overshoot * 1000, 2) mm</strong>
+            </div>
+            <div class="kv-item">
+                <span class="kv-label">Uç hatası RMS / maks.</span>
+                <strong class="kv-value">@LabFormat.Fixed(m.RmsToolError * 1000, 2) / @LabFormat.Fixed(m.MaxToolError * 1000, 2) mm</strong>
+            </div>
+            <div class="kv-item">
+                <span class="kv-label">Son uç hatası</span>
+                <strong class="kv-value">@LabFormat.Fixed(m.FinalToolError * 1000, 3) mm</strong>
+            </div>
+            @if (Kind == TaskKind.Track)
+            {
+                <div class="kv-item">
+                    <span class="kv-label">İzleme RMS (yalnız hareket)</span>
+                    <strong class="kv-value">@LabFormat.Fixed(m.TrackingRmsToolError * 1000, 3) mm</strong>
+                </div>
+            }
+            <div class="kv-item">
+                <span class="kv-label">Mekanik enerji</span>
+                <strong class="kv-value">@LabFormat.Fixed(m.MechanicalEnergy, 3) J</strong>
+            </div>
+            <div class="kv-item">
+                <span class="kv-label">Herhangi bir eklem kırpıldı</span>
+                <strong class="kv-value">%@LabFormat.Fixed(m.AnyClampedPercent, 1) zaman</strong>
+            </div>
+            <div class="kv-item">
+                <span class="kv-label">Yük alma / bırakma · maks. yük</span>
+                <strong class="kv-value">@m.PayloadAttachments / @m.PayloadReleases · @LabFormat.Fixed(m.MaxPayloadKg, 2) kg</strong>
+            </div>
+        </div>
+
+        <div class="table-scroll">
+        <table class="readout-table metrics-table">
+            <thead>
+                <tr>
+                    <th>Eklem</th>
+                    <th>RMS e <small>(rad)</small></th>
+                    <th>maks |e| <small>(rad)</small></th>
+                    <th>tepe |τ| <small>(N·m)</small></th>
+                    <th>kırpma <small>(%)</small></th>
+                    <th>doyum <small>(%)</small></th>
+                </tr>
+            </thead>
+            <tbody>
+                @for (var i = 0; i < 4; i++)
+                {
+                    <tr>
+                        <td class="joint-col">E@(i + 1)</td>
+                        <td class="mono-cell">@Sci(m.RmsJointError[i])</td>
+                        <td class="mono-cell">@Sci(m.MaxJointError[i])</td>
+                        <td class="mono-cell">@LabFormat.Fixed(m.PeakTorque[i], 2)</td>
+                        <td class="mono-cell">@LabFormat.Fixed(m.ClampedPercent[i], 1)</td>
+                        <td class="mono-cell">@LabFormat.Fixed(m.SaturatedPercent[i], 1)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        </div>
+        <p class="muted-note">Metrikler gerçek durumdan (sensör okumasından değil), her örneğin gerçek tutma aralığıyla ağırlıklandırılarak hesaplanır. Kırpma kontrolcünün, doyum motorun sınırlamasıdır (D6).</p>
+    }
+</section>
+
+@code {
+    [Parameter] public RunResult? Result { get; set; }
+    [Parameter] public TaskKind? Kind { get; set; }
+    [Parameter] public bool IsRunning { get; set; }
+
+    private RunResult? _rendered;
+
+    protected override bool ShouldRender()
+    {
+        if (IsRunning && ReferenceEquals(_rendered, Result)) return false;
+        _rendered = Result;
+        return true;
+    }
+
+    internal static string Sci(double v) =>
+        v != 0 && Math.Abs(v) < 1e-3
+            ? v.ToString("0.00E+0", CultureInfo.InvariantCulture).Replace('.', ',')
+            : LabFormat.Fixed(v, 4);
+}

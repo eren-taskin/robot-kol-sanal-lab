@@ -1,0 +1,79 @@
+@page "/grafik-testi"
+
+<PageTitle>Grafik bileşeni testi — KON 445E</PageTitle>
+
+@*
+    Self-test page for the Plot component (T10), not linked from the menu. It exercises the modes that
+    the analysis page (A2) will need but the T10 time plots do not: equal aspect with the unit circle
+    (z-plane), a log x axis with a second y axis (Bode), and non-monotonic x (a locus). The curves are
+    textbook formulas for a second-order system, not the arm model.
+*@
+
+<section class="panel-card">
+    <div class="panel-header">
+        <h2>Grafik bileşeni testi</h2>
+        <span class="unit-badge">menüde yok · A2 için</span>
+    </div>
+    <p class="muted-note">
+        İkinci mertebe sistem G(s) = ωn² / (s² + 2ζωn s + ωn²), ωn = 12 rad/s. Bu sayfa yalnız grafik bileşeninin
+        eşit ölçek + birim çember, log eksen, ikinci y ekseni ve x'e göre sıralı olmayan seri modlarını sınamak içindir.
+    </p>
+    <div class="plot-grid">
+        <Plot Spec="_zPlane" Height="320" />
+        <Plot Spec="_bode" Height="320" />
+    </div>
+</section>
+
+@code {
+    private const double Wn = 12;
+    private PlotSpec _zPlane = null!;
+    private PlotSpec _bode = null!;
+
+    protected override void OnInitialized()
+    {
+        // z-plane: poles z = exp(s·Ts) of the second-order system for ζ = 0.3, Ts from 1 ms to 400 ms.
+        var ts = Enumerable.Range(0, 400).Select(k => 0.001 * Math.Pow(400, k / 399.0)).ToArray();
+        const double zeta = 0.3;
+        var sigma = -zeta * Wn;
+        var wd = Wn * Math.Sqrt(1 - zeta * zeta);
+        double[] Re(int sign) => ts.Select(T => Math.Exp(sigma * T) * Math.Cos(sign * wd * T)).ToArray();
+        double[] Im(int sign) => ts.Select(T => Math.Exp(sigma * T) * Math.Sin(sign * wd * T)).ToArray();
+        _zPlane = new PlotSpec
+        {
+            Title = "z düzlemi: kutuplar e^(s·Ts), Ts = 1…400 ms (eşit ölçek)",
+            X = new PlotAxis("Re z"),
+            Y = new PlotAxis("Im z"),
+            EqualAspect = true,
+            UnitCircle = true,
+            Series =
+            [
+                new PlotSeries("üst kutup", "#2563eb", Re(1), Im(1)),
+                new PlotSeries("alt kutup", "#2563eb", Re(-1), Im(-1)) { Dashed = true, HideInLegend = true },
+                new PlotSeries("Ts = 50 ms", "#dc2626", [Math.Exp(sigma * 0.05) * Math.Cos(wd * 0.05), Math.Exp(sigma * 0.05) * Math.Cos(wd * 0.05)],
+                    [Math.Exp(sigma * 0.05) * Math.Sin(wd * 0.05), -Math.Exp(sigma * 0.05) * Math.Sin(wd * 0.05)]) { PointsOnly = true }
+            ],
+            HLines = [new PlotHLine(0, "", "#64748b")]
+        };
+
+        // Bode: |G(jω)| on a log–log axis, phase on the right axis, ζ = 0.1 and 0.7.
+        var w = Enumerable.Range(0, 600).Select(k => Math.Pow(10, -1 + 4.0 * k / 599)).ToArray();
+        double Mag(double om, double z) => Wn * Wn / Math.Sqrt(Math.Pow(Wn * Wn - om * om, 2) + Math.Pow(2 * z * Wn * om, 2));
+        double Phase(double om, double z) => -Math.Atan2(2 * z * Wn * om, Wn * Wn - om * om) * 180 / Math.PI;
+        _bode = new PlotSpec
+        {
+            Title = "Bode: genlik (log–log) ve faz (sağ eksen)",
+            X = new PlotAxis("ω (rad/s)", AxisScale.Log),
+            Y = new PlotAxis("|G|", AxisScale.Log),
+            Y2 = new PlotAxis("faz (°)", AxisScale.Linear, -180, 0),
+            Series =
+            [
+                new PlotSeries("|G|, ζ = 0,1", "#2563eb", w, w.Select(om => Mag(om, 0.1)).ToArray()),
+                new PlotSeries("|G|, ζ = 0,7", "#16a34a", w, w.Select(om => Mag(om, 0.7)).ToArray()),
+                new PlotSeries("faz, ζ = 0,1", "#2563eb", w, w.Select(om => Phase(om, 0.1)).ToArray()) { Axis = YAxisSide.Right, Dashed = true },
+                new PlotSeries("faz, ζ = 0,7", "#16a34a", w, w.Select(om => Phase(om, 0.7)).ToArray()) { Axis = YAxisSide.Right, Dashed = true }
+            ],
+            Markers = [new PlotMarker(Wn, "ωn = 12 rad/s", "#64748b")],
+            HLines = [new PlotHLine(-90, "−90°", "#94a3b8", YAxisSide.Right)]
+        };
+    }
+}

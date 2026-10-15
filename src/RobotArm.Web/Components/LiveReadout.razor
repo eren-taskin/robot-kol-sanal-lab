@@ -112,46 +112,6 @@
         </table>
     </div>
 
-    <!-- 3. Tamamlanan Koşu Özeti (Varsa) -->
-    @if (Result is not null)
-    {
-        var m = Result.Metrics;
-        <div class="readout-section">
-            <div class="group-title">Deney Sonuç Metrikleri</div>
-            <div class="kv-grid">
-                <div class="kv-item">
-                    <span class="kv-label">Sonuç</span>
-                    <strong class="kv-value @(Result.Success ? "text-ok" : "text-danger")">
-                        @(Result.Success ? "Başarılı" : "Başarısız")
-                    </strong>
-                </div>
-                <div class="kv-item">
-                    <span class="kv-label">Yerleşme Süresi</span>
-                    <strong class="kv-value">
-                        @(m.SettlingTime is double st ? $"{LabFormat.Fixed(st, 3)} s" : "Yerleşmedi")
-                    </strong>
-                </div>
-                <div class="kv-item">
-                    <span class="kv-label">RMS / Maks Uç Hatası</span>
-                    <strong class="kv-value">@LabFormat.Fixed(m.RmsToolError * 1000, 2) / @LabFormat.Fixed(m.MaxToolError * 1000, 2) mm</strong>
-                </div>
-                <div class="kv-item">
-                    <span class="kv-label">Son Uç Hatası / Aşım</span>
-                    <strong class="kv-value">@LabFormat.Fixed(m.FinalToolError * 1000, 2) / @LabFormat.Fixed(m.Overshoot * 1000, 2) mm</strong>
-                </div>
-                <div class="kv-item">
-                    <span class="kv-label">Tepe Tork |τ| (E1..E4)</span>
-                    <strong class="kv-value">
-                        @LabFormat.Fixed(m.PeakTorque[0], 2) · @LabFormat.Fixed(m.PeakTorque[1], 2) · @LabFormat.Fixed(m.PeakTorque[2], 2) · @LabFormat.Fixed(m.PeakTorque[3], 2) N·m
-                    </strong>
-                </div>
-                <div class="kv-item">
-                    <span class="kv-label">Kırpma Oranı / Enerji</span>
-                    <strong class="kv-value">%@LabFormat.Fixed(m.AnyClampedPercent, 1) · @LabFormat.Fixed(m.MechanicalEnergy, 3) J</strong>
-                </div>
-            </div>
-        </div>
-    }
 </section>
 
 @code {

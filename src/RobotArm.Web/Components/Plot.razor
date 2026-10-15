@@ -1,0 +1,580 @@
+@namespace RobotArm.Web.Components
+@using System.Text
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+@*
+    Reusable hand-made SVG plot (T10). No charting library. Supports several series, linear and log axes,
+    an optional right y axis, vertical markers, shaded x intervals, horizontal limit lines, an equal-aspect
+    mode with a unit circle, a hover read-out of the nearest point, and margins sized from the tick labels
+    so that no label is clipped. The viewBox equals the rendered size in pixels, so text keeps its size.
+    Rendering is cached: a new PlotSpec instance (or a new width) rebuilds the paths; anything else
+    (the parent re-rendering every animation frame) does not render this component at all.
+*@
+
+<div class="plot-box" @ref="_wrap">
+    @if (!string.IsNullOrEmpty(Spec?.Title))
+    {
+        <div class="plot-title">@Spec.Title</div>
+    }
+    @if (_layout is { } L)
+    {
+        <svg class="plot-svg" width="@L.Width" height="@Height" viewBox="0 0 @L.Width @Height"
+             xmlns="http://www.w3.org/2000/svg" role="img" aria-label="@Spec?.Title"
+             @onmousemove="OnMouseMove" @onmouseleave="OnMouseLeave">
+            <defs>
+                <clipPath id="@_clipId">
+                    <rect x="@PlotMath.Svg(L.Left)" y="@PlotMath.Svg(L.Top)" width="@PlotMath.Svg(L.PlotW)" height="@PlotMath.Svg(L.PlotH)" />
+                </clipPath>
+            </defs>
+            <g style="pointer-events:none">
+                <rect x="@PlotMath.Svg(L.Left)" y="@PlotMath.Svg(L.Top)" width="@PlotMath.Svg(L.PlotW)" height="@PlotMath.Svg(L.PlotH)" class="plot-area" />
+
+                @* Bands, under everything else *@
+                <g clip-path="url(#@_clipId)">
+                    @foreach (var b in L.Bands)
+                    {
+                        <rect x="@b.X" y="@PlotMath.Svg(L.Top)" width="@b.W" height="@PlotMath.Svg(L.PlotH)" fill="@b.Color" fill-opacity="@b.Opacity" />
+                    }
+                </g>
+
+                @* Grid and tick labels *@
+                @foreach (var t in L.XTicks)
+                {
+                    <g>
+                    <line x1="@t.Pos" y1="@PlotMath.Svg(L.Top)" x2="@t.Pos" y2="@PlotMath.Svg(L.Top + L.PlotH)" class="plot-gridline" />
+                    <text x="@t.Pos" y="@PlotMath.Svg(L.Top + L.PlotH + 13)" text-anchor="middle" class="plot-tick">@t.Label</text>
+                    </g>
+                }
+                @foreach (var t in L.YTicks)
+                {
+                    <g>
+                    <line x1="@PlotMath.Svg(L.Left)" y1="@t.Pos" x2="@PlotMath.Svg(L.Left + L.PlotW)" y2="@t.Pos" class="@(t.IsZero ? "plot-gridline plot-zero" : "plot-gridline")" />
+                    <text x="@PlotMath.Svg(L.Left - 5)" y="@t.Pos" dy="0.32em" text-anchor="end" class="plot-tick">@t.Label</text>
+                    </g>
+                }
+                @foreach (var t in L.Y2Ticks)
+                {
+                    <g>
+                    <line x1="@PlotMath.Svg(L.Left + L.PlotW)" y1="@t.Pos" x2="@PlotMath.Svg(L.Left + L.PlotW + 4)" y2="@t.Pos" class="plot-axis-line" />
+                    <text x="@PlotMath.Svg(L.Left + L.PlotW + 6)" y="@t.Pos" dy="0.32em" text-anchor="start" class="plot-tick">@t.Label</text>
+                    </g>
+                }
+
+                @* Axis titles *@
+                <text x="@PlotMath.Svg(L.Left + L.PlotW / 2)" y="@PlotMath.Svg(Height - 4)" text-anchor="middle" class="plot-axis-title">@Spec!.X.Label</text>
+                <text transform="translate(12 @PlotMath.Svg(L.Top + L.PlotH / 2)) rotate(-90)" text-anchor="middle" class="plot-axis-title">@Spec.Y.Label</text>
+                @if (Spec.Y2 is not null)
+                {
+                    <g><text transform="translate(@PlotMath.Svg(L.Width - 15) @PlotMath.Svg(L.Top + L.PlotH / 2)) rotate(90)" text-anchor="middle" class="plot-axis-title">@Spec.Y2.Label</text></g>
+                }
+
+                <g clip-path="url(#@_clipId)">
+                    @if (L.UnitCircle is { } uc)
+                    {
+                        <circle cx="@uc.Cx" cy="@uc.Cy" r="@uc.R" class="plot-unit-circle" />
+                    }
+                    @foreach (var h in L.HLines)
+                    {
+                        <line x1="@PlotMath.Svg(L.Left)" y1="@h.Pos" x2="@PlotMath.Svg(L.Left + L.PlotW)" y2="@h.Pos" stroke="@h.Color" class="plot-hline" />
+                    }
+                    @foreach (var m in L.Markers)
+                    {
+                        <line x1="@m.Pos" y1="@PlotMath.Svg(L.Top)" x2="@m.Pos" y2="@PlotMath.Svg(L.Top + L.PlotH)" stroke="@m.Color" class="plot-marker" />
+                    }
+                    @for (var i = 0; i < L.Series.Length; i++)
+                    {
+                        var s = L.Series[i];
+                        if (_hidden.Contains(s.Name)) continue;
+                        if (s.PointsOnly)
+                        {
+                            <path d="@s.Path" fill="@s.Color" stroke="none" />
+                        }
+                        else
+                        {
+                            <path d="@s.Path" fill="none" stroke="@s.Color" stroke-width="@s.Width"
+                                  stroke-dasharray="@(s.Dashed ? "5 3" : null)" stroke-linejoin="round" />
+                        }
+                    }
+                </g>
+
+                @* Labels of limit lines and markers, kept inside the plot area *@
+                @foreach (var h in L.HLines)
+                {
+                    <g><text x="@PlotMath.Svg(L.Left + L.PlotW - 4)" y="@h.LabelY" text-anchor="end" fill="@h.Color" class="plot-line-label">@h.Label</text></g>
+                }
+                @foreach (var m in L.Markers)
+                {
+                    <g><text x="@m.LabelX" y="@m.LabelY" text-anchor="@m.Anchor" fill="@m.Color" class="plot-line-label">@m.Label</text></g>
+                }
+
+                <rect x="@PlotMath.Svg(L.Left)" y="@PlotMath.Svg(L.Top)" width="@PlotMath.Svg(L.PlotW)" height="@PlotMath.Svg(L.PlotH)" class="plot-frame" />
+
+                @if (_hover is { } hv)
+                {
+                    var boxW = Math.Max(hv.Line1.Length, hv.Line2.Length) * 6.4 + 12;
+                    var bx = hv.Px + 10 + boxW <= L.Left + L.PlotW ? hv.Px + 10 : hv.Px - 10 - boxW;
+                    bx = Math.Max(L.Left + 1, bx);
+                    var by = Math.Clamp(hv.Py - 40, L.Top + 1, L.Top + L.PlotH - 37);
+                    <circle cx="@PlotMath.Svg(hv.Px)" cy="@PlotMath.Svg(hv.Py)" r="4" fill="none" stroke="@hv.Color" stroke-width="2" />
+                    <g class="plot-readout">
+                        <rect x="@PlotMath.Svg(bx)" y="@PlotMath.Svg(by)" width="@PlotMath.Svg(boxW)" height="36" rx="3" />
+                        <text x="@PlotMath.Svg(bx + 6)" y="@PlotMath.Svg(by + 14)" fill="@hv.Color" class="plot-readout-name">@hv.Line1</text>
+                        <text x="@PlotMath.Svg(bx + 6)" y="@PlotMath.Svg(by + 29)" class="plot-readout-value">@hv.Line2</text>
+                    </g>
+                }
+            </g>
+        </svg>
+    }
+    @if (Spec is not null && Spec.Series.Any(s => !s.HideInLegend))
+    {
+        <div class="plot-legend">
+            @foreach (var s in Spec.Series)
+            {
+                if (s.HideInLegend) continue;
+                var name = s.Name;
+                <button type="button" class="plot-legend-item @(_hidden.Contains(name) ? "plot-legend-off" : "")"
+                        title="Göster / gizle" @onclick="() => ToggleSeries(name)">
+                    <svg width="18" height="8" aria-hidden="true">
+                        @if (s.PointsOnly)
+                        {
+                            <circle cx="9" cy="4" r="3" fill="@s.Color" />
+                        }
+                        else
+                        {
+                            <line x1="0" y1="4" x2="18" y2="4" stroke="@s.Color" stroke-width="2.2" stroke-dasharray="@(s.Dashed ? "4 2" : null)" />
+                        }
+                    </svg>
+                    @name@(s.Axis == YAxisSide.Right ? " (sağ eksen)" : "")
+                </button>
+            }
+        </div>
+    }
+    @if (!string.IsNullOrEmpty(Spec?.Note))
+    {
+        <div class="plot-note">@Spec.Note</div>
+    }
+</div>
+
+@code {
+    private const double CharW = 6.4;     // estimate for 11 px tick labels
+    private const double TickLabelH = 14;
+
+    [Parameter, EditorRequired] public PlotSpec? Spec { get; set; }
+    [Parameter] public int Height { get; set; } = 240;
+
+    private static int _nextId;
+    private readonly string _clipId = "plotclip" + Interlocked.Increment(ref _nextId);
+    private readonly HashSet<string> _hidden = new(StringComparer.Ordinal);
+    private ElementReference _wrap;
+    private DotNetObjectReference<Plot>? _selfRef;
+    private int _width = 560;
+
+    private PlotSpec? _laidOutSpec;
+    private int _laidOutWidth;
+    private int _laidOutHeight;
+    private Decimated[] _decimated = [];
+    private Layout? _layout;
+    private Hover? _hover;
+    private bool _needsRender = true;
+
+    private sealed record Decimated(PlotSeries Source, double[] X, double[] Y);
+    private readonly record struct Tick(string Pos, string Label, bool IsZero);
+    private readonly record struct BandR(string X, string W, string Color, string Opacity);
+    private readonly record struct HLineR(string Pos, string LabelY, string Label, string Color);
+    private readonly record struct MarkerR(string Pos, string LabelX, string LabelY, string Anchor, string Label, string Color);
+    private readonly record struct CircleR(string Cx, string Cy, string R);
+    private sealed record SeriesR(string Name, string Color, string Path, string Width, bool Dashed, bool PointsOnly,
+        float[] Px, float[] Py, double[] X, double[] Y, bool Right);
+    private sealed record Layout(int Width, double Left, double Top, double PlotW, double PlotH,
+        Tick[] XTicks, Tick[] YTicks, Tick[] Y2Ticks, BandR[] Bands, HLineR[] HLines, MarkerR[] Markers,
+        CircleR? UnitCircle, SeriesR[] Series);
+    private sealed record Hover(double Px, double Py, string Color, string Line1, string Line2);
+
+    /// <summary>Data-to-pixel mapping of one axis.</summary>
+    private readonly record struct Map(double Min, double Max, bool Log, double P0, double P1)
+    {
+        public double ToPx(double v)
+        {
+            double a, b, x;
+            if (Log) { a = Math.Log10(Min); b = Math.Log10(Max); x = v > 0 ? Math.Log10(v) : double.NaN; }
+            else { a = Min; b = Max; x = v; }
+            return P0 + (x - a) / (b - a) * (P1 - P0);
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (!ReferenceEquals(Spec, _laidOutSpec) || _laidOutHeight != Height)
+        {
+            if (!ReferenceEquals(Spec, _laidOutSpec))
+            {
+                _hover = null;
+                _decimated = Spec is null ? [] : Spec.Series.Select(DecimateSeries).ToArray();
+            }
+            Relayout();
+        }
+    }
+
+    protected override bool ShouldRender() => _needsRender;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        _needsRender = false;
+        if (firstRender)
+        {
+            _selfRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("robotArmPlot.observe", _wrap, _selfRef);
+        }
+    }
+
+    /// <summary>Called by plot.js when the rendered width changes.</summary>
+    [JSInvokable]
+    public void SetWidth(int width)
+    {
+        width = Math.Max(240, width);
+        if (width == _width) return;
+        _width = width;
+        _hover = null;
+        Relayout();
+        StateHasChanged();
+    }
+
+    private void ToggleSeries(string name)
+    {
+        if (!_hidden.Remove(name)) _hidden.Add(name);
+        _hover = null;
+        _needsRender = true;
+    }
+
+    private void OnMouseLeave()
+    {
+        if (_hover is null) return;
+        _hover = null;
+        _needsRender = true;
+    }
+
+    private void OnMouseMove(MouseEventArgs e)
+    {
+        var L = _layout;
+        if (L is null) return;
+        var mx = e.OffsetX;
+        var my = e.OffsetY;
+        Hover? next = null;
+        if (mx >= L.Left - 4 && mx <= L.Left + L.PlotW + 4 && my >= L.Top - 4 && my <= L.Top + L.PlotH + 4)
+        {
+            var best = 40.0 * 40.0;
+            SeriesR? bestS = null;
+            var bestI = -1;
+            foreach (var s in L.Series)
+            {
+                if (_hidden.Contains(s.Name)) continue;
+                var px = s.Px;
+                var py = s.Py;
+                for (var i = 0; i < px.Length; i++)
+                {
+                    var dx = px[i] - mx;
+                    var dy = py[i] - my;
+                    var d = dx * dx + dy * dy;
+                    if (d < best) { best = d; bestS = s; bestI = i; }
+                }
+            }
+            if (bestS is not null)
+            {
+                next = new Hover(bestS.Px[bestI], bestS.Py[bestI], bestS.Color, bestS.Name,
+                    $"{Spec!.X.Label.Split(' ')[0]} = {PlotMath.FormatValue(bestS.X[bestI])},  {(bestS.Right ? "y₂" : "y")} = {PlotMath.FormatValue(bestS.Y[bestI])}");
+            }
+        }
+        if (next == _hover) { _needsRender = false; return; }
+        _hover = next;
+        _needsRender = true;
+    }
+
+    private static Decimated DecimateSeries(PlotSeries s)
+    {
+        var n = Math.Min(s.X.Length, s.Y.Length);
+        if (n <= PlotMath.MaxPointsPerSeries) return new(s, s.X, s.Y);
+        var monotonic = true;
+        for (var i = 1; i < n && monotonic; i++) monotonic = !(s.X[i] < s.X[i - 1]);
+        if (monotonic && !s.PointsOnly)
+        {
+            var (x, y) = PlotMath.Decimate(s.X, s.Y);
+            return new(s, x, y);
+        }
+        // Not ordered in x (root locus, pole maps): keep every k-th point.
+        var k = (int)Math.Ceiling(n / (double)PlotMath.MaxPointsPerSeries);
+        var m = (n + k - 1) / k;
+        var xs = new double[m];
+        var ys = new double[m];
+        for (var j = 0; j < m; j++) { xs[j] = s.X[j * k]; ys[j] = s.Y[j * k]; }
+        return new(s, xs, ys);
+    }
+
+    private void Relayout()
+    {
+        _needsRender = true;
+        _laidOutSpec = Spec;
+        _laidOutWidth = _width;
+        _laidOutHeight = Height;
+        if (Spec is null) { _layout = null; return; }
+
+        var spec = Spec;
+        var width = _width;
+        var xLog = spec.X.Scale == AxisScale.Log && !spec.EqualAspect;
+        var yLog = spec.Y.Scale == AxisScale.Log && !spec.EqualAspect;
+        var y2Log = spec.Y2?.Scale == AxisScale.Log;
+
+        // 1. Data ranges.
+        var (xMin, xMax) = Range(_decimated.Select(d => d.X), xLog, spec.X, pad: false);
+        var (yMin, yMax) = Range(_decimated.Where(d => d.Source.Axis == YAxisSide.Left).Select(d => d.Y)
+            .Append(spec.HLines.Where(h => h.Axis == YAxisSide.Left).Select(h => h.Y).ToArray()), yLog, spec.Y, pad: true);
+        double y2Min = 0, y2Max = 1;
+        if (spec.Y2 is not null)
+        {
+            (y2Min, y2Max) = Range(_decimated.Where(d => d.Source.Axis == YAxisSide.Right).Select(d => d.Y)
+                .Append(spec.HLines.Where(h => h.Axis == YAxisSide.Right).Select(h => h.Y).ToArray()), y2Log, spec.Y2, pad: true);
+        }
+
+        // A z-plane plot shows the whole unit circle.
+        if (spec.UnitCircle && !xLog && !yLog)
+        {
+            (xMin, xMax) = (Math.Min(xMin, -1.1), Math.Max(xMax, 1.1));
+            (yMin, yMax) = (Math.Min(yMin, -1.1), Math.Max(yMax, 1.1));
+        }
+
+        // 2. Margins from the tick labels, two passes (equal aspect changes the ranges and so the labels).
+        const double top = 10;
+        var bottom = TickLabelH + 18 + 4;
+        var plotH = Math.Max(40, Height - top - bottom);
+        double left = 40, right = 12, plotW = width - 52;
+        Tick[] xt = [], yt = [], y2t = [];
+        List<(double V, string L)> yLabels = [], y2Labels = [], xLabels = [];
+        for (var pass = 0; pass < 3; pass++)
+        {
+            if (spec.EqualAspect)
+            {
+                (xMin, xMax, yMin, yMax) = Equalize(xMin, xMax, yMin, yMax, plotW, plotH);
+            }
+            yLabels = Labels(yMin, yMax, yLog, Math.Max(2, (int)(plotH / 38)));
+            y2Labels = spec.Y2 is null ? [] : Labels(y2Min, y2Max, y2Log, Math.Max(2, (int)(plotH / 38)));
+            var yLabelW = yLabels.Count == 0 ? 0 : yLabels.Max(l => l.L.Length) * CharW;
+            var y2LabelW = y2Labels.Count == 0 ? 0 : y2Labels.Max(l => l.L.Length) * CharW;
+            left = 20 + 5 + yLabelW + 2;
+            right = spec.Y2 is null ? 12 : 6 + y2LabelW + 24;
+
+            // x ticks: fewer until neighbouring labels do not overlap.
+            plotW = Math.Max(60, width - left - right);
+            var target = Math.Max(2, (int)(plotW / 55));
+            for (; target >= 2; target--)
+            {
+                xLabels = Labels(xMin, xMax, xLog, target);
+                var maxW = xLabels.Count == 0 ? 0 : xLabels.Max(l => l.L.Length) * CharW;
+                var spacing = xLabels.Count < 2 ? plotW : plotW / Math.Max(1, xLabels.Count - 1) * 0.9;
+                if (maxW + 10 <= spacing) break;
+            }
+            // The outermost x labels are centred on their ticks: make room for half of them.
+            if (xLabels.Count > 0)
+            {
+                var xm0 = new Map(xMin, xMax, xLog, 0, 1);
+                var last = xLabels[^1];
+                var overhangR = last.L.Length * CharW / 2 - (1 - xm0.ToPx(last.V)) * plotW;
+                if (overhangR > right) right = overhangR + 2;
+                var first = xLabels[0];
+                var overhangL = first.L.Length * CharW / 2 - xm0.ToPx(first.V) * plotW;
+                if (overhangL > left) left = overhangL + 2;
+            }
+            var newPlotW = Math.Max(60, width - left - right);
+            if (Math.Abs(newPlotW - plotW) < 0.5 && pass > 0) { plotW = newPlotW; break; }
+            plotW = newPlotW;
+        }
+
+        var xm = new Map(xMin, xMax, xLog, left, left + plotW);
+        var ym = new Map(yMin, yMax, yLog, top + plotH, top);
+        var y2m = new Map(y2Min, y2Max, y2Log, top + plotH, top);
+        xt = xLabels.Select(l => new Tick(PlotMath.Svg(xm.ToPx(l.V)), l.L, false)).ToArray();
+        yt = yLabels.Select(l => new Tick(PlotMath.Svg(ym.ToPx(l.V)), l.L, !yLog && l.V == 0)).ToArray();
+        y2t = y2Labels.Select(l => new Tick(PlotMath.Svg(y2m.ToPx(l.V)), l.L, false)).ToArray();
+
+        // 3. Decorations.
+        var bands = spec.Bands
+            .Where(b => double.IsFinite(xm.ToPx(b.X0)) && double.IsFinite(xm.ToPx(b.X1)))
+            .Select(b =>
+            {
+                var x0 = Math.Clamp(xm.ToPx(b.X0), left, left + plotW);
+                var x1 = Math.Clamp(xm.ToPx(b.X1), left, left + plotW);
+                return new BandR(PlotMath.Svg(x0), PlotMath.Svg(Math.Max(0.8, x1 - x0)), b.Color, PlotMath.Svg(b.Opacity));
+            }).ToArray();
+
+        var hlines = spec.HLines.Select(h =>
+        {
+            var p = (h.Axis == YAxisSide.Right ? y2m : ym).ToPx(h.Y);
+            var labelY = p - 3 < top + 10 ? p + 11 : p - 3;
+            return new HLineR(PlotMath.Svg(p), PlotMath.Svg(labelY), h.Label, h.Color);
+        }).ToArray();
+
+        var markers = spec.Markers.Where(m => double.IsFinite(xm.ToPx(m.X))).Select((m, i) =>
+        {
+            var p = xm.ToPx(m.X);
+            var labelW = m.Label.Length * CharW;
+            var endAnchored = p + 3 + labelW > left + plotW;
+            return new MarkerR(PlotMath.Svg(p), PlotMath.Svg(endAnchored ? p - 3 : p + 3),
+                PlotMath.Svg(top + 11 + (i % 2) * 12), endAnchored ? "end" : "start", m.Label, m.Color);
+        }).ToArray();
+
+        CircleR? circle = null;
+        if (spec.UnitCircle && !xLog && !yLog)
+        {
+            var cx = xm.ToPx(0);
+            var cy = ym.ToPx(0);
+            circle = new CircleR(PlotMath.Svg(cx), PlotMath.Svg(cy), PlotMath.Svg(Math.Abs(xm.ToPx(1) - cx)));
+        }
+
+        // 4. Series paths, projected once; the hover search reuses the projected points.
+        var series = new SeriesR[_decimated.Length];
+        for (var k = 0; k < _decimated.Length; k++)
+        {
+            var d = _decimated[k];
+            var map = d.Source.Axis == YAxisSide.Right ? y2m : ym;
+            var n = Math.Min(d.X.Length, d.Y.Length);
+            var sb = new StringBuilder(n * 14);
+            var px = new List<float>(n);
+            var py = new List<float>(n);
+            var xs = new List<double>(n);
+            var ys = new List<double>(n);
+            var penDown = false;
+            for (var i = 0; i < n; i++)
+            {
+                var X = xm.ToPx(d.X[i]);
+                var Y = map.ToPx(d.Y[i]);
+                if (!double.IsFinite(X) || !double.IsFinite(Y)) { penDown = false; continue; }
+                // Keep far-off points finite for SVG, still drawing towards them.
+                X = Math.Clamp(X, -1e5, 1e5);
+                Y = Math.Clamp(Y, -1e5, 1e5);
+                if (d.Source.PointsOnly)
+                {
+                    sb.Append('M');
+                    AppendCoord(sb, X - 2.5);
+                    sb.Append(' ');
+                    AppendCoord(sb, Y);
+                    sb.Append("a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0");
+                }
+                else
+                {
+                    sb.Append(penDown ? 'L' : 'M');
+                    AppendCoord(sb, X);
+                    sb.Append(' ');
+                    AppendCoord(sb, Y);
+                    penDown = true;
+                }
+                px.Add((float)X); py.Add((float)Y); xs.Add(d.X[i]); ys.Add(d.Y[i]);
+            }
+            series[k] = new SeriesR(d.Source.Name, d.Source.Color, sb.ToString(), PlotMath.Svg(d.Source.Width),
+                d.Source.Dashed, d.Source.PointsOnly, px.ToArray(), py.ToArray(), xs.ToArray(), ys.ToArray(),
+                d.Source.Axis == YAxisSide.Right);
+        }
+
+        _layout = new Layout(width, left, top, plotW, plotH, xt, yt, y2t, bands, hlines, markers, circle, series);
+    }
+
+    /// <summary>
+    /// Appends a pixel coordinate rounded to 0.1 px without double.ToString, which is the slowest part of
+    /// building a path on WebAssembly (thousands of numbers per plot).
+    /// </summary>
+    private static void AppendCoord(StringBuilder sb, double v)
+    {
+        var n = (long)Math.Round(v * 10);
+        if (n < 0)
+        {
+            sb.Append('-');
+            n = -n;
+        }
+        var whole = n / 10;
+        Span<char> digits = stackalloc char[20];
+        var len = 0;
+        do
+        {
+            digits[len++] = (char)('0' + (int)(whole % 10));
+            whole /= 10;
+        } while (whole > 0);
+        for (var i = len - 1; i >= 0; i--) sb.Append(digits[i]);
+        var frac = (int)(n % 10);
+        if (frac != 0)
+        {
+            sb.Append('.').Append((char)('0' + frac));
+        }
+    }
+
+    private static List<(double V, string L)> Labels(double min, double max, bool log, int target)
+    {
+        if (log)
+        {
+            return PlotMath.LogTicks(min, max, target).Select(v => (v, PlotMath.FormatLogTick(v))).ToList();
+        }
+        var (ticks, step) = PlotMath.LinearTicks(min, max, target);
+        return ticks.Select(v => (v, PlotMath.FormatTick(v, step))).ToList();
+    }
+
+    private static (double Min, double Max) Range(IEnumerable<double[]> arrays, bool log, PlotAxis axis, bool pad)
+    {
+        double lo = double.PositiveInfinity, hi = double.NegativeInfinity;
+        foreach (var a in arrays)
+        {
+            foreach (var v in a)
+            {
+                if (!double.IsFinite(v) || (log && v <= 0)) continue;
+                if (v < lo) lo = v;
+                if (v > hi) hi = v;
+            }
+        }
+        if (axis.Min is double fmin && (!log || fmin > 0)) lo = fmin;
+        if (axis.Max is double fmax && (!log || fmax > 0)) hi = fmax;
+        if (!double.IsFinite(lo) || !double.IsFinite(hi))
+        {
+            return log ? (1e-3, 1) : (0, 1);
+        }
+        if (log)
+        {
+            if (hi <= lo) { lo /= 10; hi *= 10; }
+            if (pad && axis.Min is null) lo /= 1.25;
+            if (pad && axis.Max is null) hi *= 1.25;
+            return (lo, hi);
+        }
+        if (hi - lo < 1e-12 * Math.Max(1, Math.Abs(hi)))
+        {
+            var d = Math.Abs(hi) > 0 ? Math.Abs(hi) * 0.1 : 1;
+            return (lo - d, hi + d);
+        }
+        if (pad)
+        {
+            var d = (hi - lo) * 0.06;
+            if (axis.Min is null) lo -= d;
+            if (axis.Max is null) hi += d;
+        }
+        return (lo, hi);
+    }
+
+    private static (double, double, double, double) Equalize(double x0, double x1, double y0, double y1, double w, double h)
+    {
+        var ux = (x1 - x0) / w;
+        var uy = (y1 - y0) / h;
+        var u = Math.Max(ux, uy);
+        var cx = (x0 + x1) / 2;
+        var cy = (y0 + y1) / 2;
+        return (cx - u * w / 2, cx + u * w / 2, cy - u * h / 2, cy + u * h / 2);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("robotArmPlot.unobserve", _wrap);
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        _selfRef?.Dispose();
+    }
+}

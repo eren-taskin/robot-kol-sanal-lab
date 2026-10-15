@@ -19,6 +19,12 @@
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.13" PrivateAssets="all" />
   </ItemGroup>
 
+  <!-- T10: the robustness grid written by the Report-category test (SPEC §9) is served as data/robustness.csv.
+       Linked, not copied into the source tree, so docs/results stays the one source of truth. -->
+  <ItemGroup>
+    <Content Include="..\..\docs\results\robustness.csv" Link="wwwroot\data\robustness.csv" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\RobotArm.Core\RobotArm.Core.csproj" />
   </ItemGroup>

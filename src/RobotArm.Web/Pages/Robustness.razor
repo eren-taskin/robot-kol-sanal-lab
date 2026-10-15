@@ -1,0 +1,216 @@
+@page "/dayaniklilik"
+@inject HttpClient Http
+
+<PageTitle>Dayanıklılık Haritası — KON 445E</PageTitle>
+
+@*
+    Robustness map (T10 item 6): docs/results/robustness.csv, written by the Report-category test
+    (SPEC §9, 160 runs, informed belief), linked into wwwroot/data at build time. Rows are controllers,
+    columns planet × payload; colour by success and settling time.
+*@
+
+<section class="panel-card robustness-panel" id="robustness-panel">
+    <div class="panel-header">
+        <h2>Dayanıklılık Haritası</h2>
+        <div class="mode-toggle" role="group" aria-label="Görev">
+            @foreach (var task in Tasks)
+            {
+                var t = task;
+                <button type="button" class="mode-btn @(_task == t ? "mode-active" : "")" id="rob-task-@t" @onclick="() => _task = t">
+                    @TaskName(t)
+                </button>
+            }
+        </div>
+    </div>
+
+    <p class="muted-note">
+        Her hücre bir deneydir: satır kontrolcü, sütun gezegen × yük kütlesi. Kontrolcü yükten haberdardır (bilgili inanç),
+        kazançlar varsayılandır. Renk başarıyı ve yerleşme zamanını gösterir; yerleşme zamanı deneyin başından ölçülür
+        (Noktaya Git'te hareket 2 s, Al ve Bırak'ta 4 s sürer, bu yüzden en iyi değer hareketin bittiği andır).
+        Kaynak: <code>docs/results/robustness.csv</code> (SPEC §9, Report testi).
+    </p>
+
+    @if (_error is not null)
+    {
+        <div class="alert-box alert-danger" id="robustness-error">@_error</div>
+    }
+    else if (_rows is null)
+    {
+        <p class="muted-note">Yükleniyor…</p>
+    }
+    else
+    {
+        var cells = _rows.Where(r => r.Task == _task).ToList();
+        var settled = cells.Where(c => c.Success && c.Settling is not null).Select(c => c.Settling!.Value).ToList();
+        var sMin = settled.Count > 0 ? settled.Min() : 0;
+        var sMax = settled.Count > 0 ? settled.Max() : 1;
+        <div class="table-scroll">
+            <table class="heatmap" id="robustness-heatmap">
+                <thead>
+                    <tr>
+                        <th rowspan="2" class="heat-corner">Kontrolcü</th>
+                        @foreach (var p in Planet.All)
+                        {
+                            <th colspan="@Payloads.Length" class="heat-planet">@p.DisplayName <small>(@LabFormat.Fixed(p.G, 2))</small></th>
+                        }
+                    </tr>
+                    <tr>
+                        @foreach (var p in Planet.All)
+                        {
+                            foreach (var m in Payloads)
+                            {
+                                <th class="heat-payload">@LabFormat.Fixed(m, 1) kg</th>
+                            }
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var c in Controllers)
+                    {
+                        <tr>
+                            <th class="heat-row">@c</th>
+                            @foreach (var p in Planet.All)
+                            {
+                                foreach (var m in Payloads)
+                                {
+                                    var cell = cells.FirstOrDefault(x => x.Controller == c && x.Planet == p.Key && Math.Abs(x.PayloadKg - m) < 1e-9);
+                                    if (cell is null)
+                                    {
+                                        <td class="heat-cell heat-missing">—</td>
+                                    }
+                                    else if (!cell.Success)
+                                    {
+                                        <td class="heat-cell heat-fail" title="@Tooltip(cell)">✕<small>@ShortReason(cell)</small></td>
+                                    }
+                                    else
+                                    {
+                                        var f = sMax > sMin && cell.Settling is double s ? (s - sMin) / (sMax - sMin) : 0;
+                                        <td class="heat-cell" style="background:@SuccessColor(f);color:@(f > 0.55 ? "#fff" : "#0f172a")" title="@Tooltip(cell)">
+                                            @(cell.Settling is double st ? LabFormat.Fixed(st, 2) : "?")
+                                        </td>
+                                    }
+                                }
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="heat-legend">
+            <span>Başarılı, yerleşme zamanı (s):</span>
+            <span class="heat-swatch" style="background:@SuccessColor(0)"></span>@LabFormat.Fixed(sMin, 2)
+            <span class="heat-ramp"></span>
+            <span class="heat-swatch" style="background:@SuccessColor(1)"></span>@LabFormat.Fixed(sMax, 2)
+            <span class="heat-swatch heat-fail-swatch">✕</span> Başarısız (zemin, eklem sınırı ya da görev ölçütü)
+        </div>
+        <p class="muted-note">Hücrenin üzerine gelince RMS uç hatası, tepe tork, kırpma oranı ve başarısızlık nedeni görünür.</p>
+    }
+</section>
+
+@code {
+    private sealed record Row(string Task, string Planet, double PayloadKg, string Controller, bool Success,
+        double? Settling, double RmsToolError, double PeakTau, double ClampedPercent, string FaultReason);
+
+    private static readonly string[] Tasks = ["Reach", "PickPlace"];
+    private static readonly string[] Controllers = ["PID", "PDG", "CT", "CT+I"];
+    private static readonly double[] Payloads = [0, 0.1, 0.3, 0.5];
+
+    private List<Row>? _rows;
+    private string? _error;
+    private string _task = "Reach";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var text = await Http.GetStringAsync("data/robustness.csv");
+            _rows = Parse(text);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or FormatException or IndexOutOfRangeException)
+        {
+            _error = $"robustness.csv okunamadı: {ex.Message}";
+        }
+    }
+
+    private static List<Row> Parse(string text)
+    {
+        var records = ParseCsv(text);
+        if (records.Count == 0) return [];
+        var h = records[0];
+        int Col(string name) => Array.IndexOf(h, name) is var i && i >= 0 ? i : throw new FormatException($"'{name}' sütunu yok.");
+        int task = Col("task"), planet = Col("planet"), payload = Col("payload_kg"), controller = Col("controller"),
+            success = Col("success"), settling = Col("settling_time_s"), rms = Col("rms_tool_error_m"),
+            peak = Col("peak_abs_tau_Nm"), clamped = Col("clamped_percent"), fault = Col("fault_reason");
+        var rows = new List<Row>();
+        foreach (var r in records.Skip(1))
+        {
+            if (r.Length < h.Length) continue;
+            rows.Add(new Row(r[task], r[planet], Num(r[payload]), r[controller], r[success] == "true",
+                string.IsNullOrWhiteSpace(r[settling]) ? null : Num(r[settling]), Num(r[rms]), Num(r[peak]), Num(r[clamped]), r[fault]));
+        }
+        return rows;
+    }
+
+    private static double Num(string s) => double.Parse(s, NumberStyles.Float, CultureInfo.InvariantCulture);
+
+    /// <summary>RFC 4180 reader: quoted fields may contain commas, quotes ("") and line breaks.</summary>
+    private static List<string[]> ParseCsv(string text)
+    {
+        var records = new List<string[]>();
+        var fields = new List<string>();
+        var field = new System.Text.StringBuilder();
+        var quoted = false;
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (quoted)
+            {
+                if (c == '"' && i + 1 < text.Length && text[i + 1] == '"') { field.Append('"'); i++; }
+                else if (c == '"') quoted = false;
+                else field.Append(c);
+            }
+            else if (c == '"') quoted = true;
+            else if (c == ',') { fields.Add(field.ToString()); field.Clear(); }
+            else if (c == '\n' || c == '\r')
+            {
+                if (c == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
+                fields.Add(field.ToString()); field.Clear();
+                if (fields.Count > 1 || fields[0].Length > 0) records.Add(fields.ToArray());
+                fields.Clear();
+            }
+            else field.Append(c);
+        }
+        if (field.Length > 0 || fields.Count > 0) { fields.Add(field.ToString()); records.Add(fields.ToArray()); }
+        return records;
+    }
+
+    private static string TaskName(string t) => t == "Reach" ? "Noktaya Git" : "Al ve Bırak";
+
+    /// <summary>Sequential blue ramp, light (fast) to dark (slow).</summary>
+    private static string SuccessColor(double f)
+    {
+        f = Math.Clamp(f, 0, 1);
+        (double R, double G, double B) a = (0xdb, 0xea, 0xfe), b = (0x1e, 0x3a, 0x8a);
+        int L(double x, double y) => (int)Math.Round(x + (y - x) * f);
+        return $"rgb({L(a.R, b.R)},{L(a.G, b.G)},{L(a.B, b.B)})";
+    }
+
+    private static string ShortReason(Row r) =>
+        r.FaultReason.StartsWith("Floor", StringComparison.Ordinal) ? "zemin"
+        : r.FaultReason.StartsWith("JointLimit", StringComparison.Ordinal) ? "sınır"
+        : "görev";
+
+    private static string Tooltip(Row r)
+    {
+        var s = $"{r.Controller} · {r.Planet} · {LabFormat.Fixed(r.PayloadKg, 1)} kg\n" +
+                $"{(r.Success ? "Başarılı" : "Başarısız")}" +
+                (r.Settling is double st ? $", yerleşme {LabFormat.Fixed(st, 3)} s" : ", yerleşmedi") + "\n" +
+                $"RMS uç hatası {LabFormat.Fixed(r.RmsToolError * 1000, 2)} mm · tepe |τ| {LabFormat.Fixed(r.PeakTau, 2)} N·m · kırpma %{LabFormat.Fixed(r.ClampedPercent, 1)}";
+        if (!string.IsNullOrWhiteSpace(r.FaultReason))
+        {
+            s += "\nNeden: " + r.FaultReason.Split('\n')[0].Trim();
+        }
+        return s;
+    }
+}

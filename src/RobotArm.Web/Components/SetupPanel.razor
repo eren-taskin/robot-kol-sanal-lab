@@ -14,6 +14,10 @@
             {
                 <option value="@s.Name">@s.Name</option>
             }
+            @if (!ScenarioLibrary.All.Any(s => s.Name == State.SelectedLibraryName))
+            {
+                <option value="@State.SelectedLibraryName">@State.SelectedLibraryName (JSON dosyasından)</option>
+            }
         </select>
         @if (!string.IsNullOrWhiteSpace(State.Description))
         {

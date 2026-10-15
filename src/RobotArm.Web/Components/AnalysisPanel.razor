@@ -1,0 +1,103 @@
+@namespace RobotArm.Web.Components
+
+@*
+    Analysis half of the laboratory (T10 items 1, 4, 5): the four time plots, the scenario's
+    "what it shows" text and observation hint, and export/import. During a Normal run the parent
+    rebuilds Plots at most 5 times per second; between those updates this panel does not render.
+*@
+
+<section class="panel-card analysis-panel" id="analysis-panel">
+    <div class="panel-header">
+        <h2>Grafikler ve Dışa Aktarma</h2>
+        <div class="analysis-toolbar">
+            <label class="perf-toggle-label">
+                <input id="log-scale-toggle" type="checkbox" checked="@LogScale"
+                       @onchange="e => OnLogScaleChanged.InvokeAsync(e.Value is bool b && b)" />
+                <span>Hatalar log ölçekte</span>
+            </label>
+            <button id="btn-compare-add" type="button" class="btn-run"
+                    disabled="@(!CanAddToComparison)" title="Bitmiş koşuyu karşılaştırma listesine ekle (en çok 4)"
+                    @onclick="OnAddToComparison">
+                ＋ Karşılaştırmaya ekle
+            </button>
+            <button id="btn-export-csv" type="button" class="btn-run" disabled="@(!CanExportCsv)"
+                    title="Koşunun örnek kaydını CSV olarak indir" @onclick="OnExportCsv">
+                ⬇ CSV kaydı
+            </button>
+            <button id="btn-export-json" type="button" class="btn-run" disabled="@IsRunning"
+                    title="Senaryoyu JSON olarak indir" @onclick="OnExportJson">
+                ⬇ Senaryo JSON
+            </button>
+            <label class="btn-run btn-file @(IsRunning ? "btn-file-disabled" : "")" title="Bir senaryo JSON dosyası yükle">
+                ⬆ JSON yükle
+                <InputFile id="import-json" accept=".json,application/json" disabled="@IsRunning" OnChange="OnImport" />
+            </label>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(StatusMessage))
+    {
+        <div id="analysis-status" class="alert-box @(StatusIsError ? "alert-danger" : "alert-ok")">@StatusMessage</div>
+    }
+
+    @if (Plots is null)
+    {
+        <p class="muted-note">Grafikler deney başlayınca kayıttan (log) çizilir: Normal modda saniyede en çok 5 kez güncellenir, Hızlı modda deney bitince bir kez çizilir.</p>
+    }
+    else
+    {
+        <div class="plot-grid">
+            <Plot Spec="Plots.Angles" Height="250" />
+            <Plot Spec="Plots.Errors" Height="250" />
+            <Plot Spec="Plots.Torques" Height="250" />
+            <Plot Spec="Plots.ToolError" Height="250" />
+        </div>
+        <p class="muted-note plot-help">
+            Fareyi grafiğin üzerinde gezdirince en yakın noktanın değeri görünür; açıklamadaki bir seriye tıklayınca seri gizlenir ya da yeniden görünür.
+            Her seri en çok yaklaşık 2000 noktaya seyreltilir (her dilimin en küçük ve en büyük değeri korunur).
+        </p>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(Description) || Hint is not null)
+    {
+        <div class="observe-box" id="observe-box">
+            @if (!string.IsNullOrWhiteSpace(Description))
+            {
+                <div><strong>Bu deney ne gösteriyor?</strong> @Description</div>
+            }
+            @if (Hint is not null)
+            {
+                <div><strong>Ne gözlemlemelisin?</strong> @Hint</div>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter] public RunPlotSet? Plots { get; set; }
+    [Parameter] public bool IsRunning { get; set; }
+    [Parameter] public bool LogScale { get; set; }
+    [Parameter] public string? Description { get; set; }
+    [Parameter] public string? Hint { get; set; }
+    [Parameter] public bool CanExportCsv { get; set; }
+    [Parameter] public bool CanAddToComparison { get; set; }
+    [Parameter] public string? StatusMessage { get; set; }
+    [Parameter] public bool StatusIsError { get; set; }
+
+    [Parameter] public EventCallback<bool> OnLogScaleChanged { get; set; }
+    [Parameter] public EventCallback OnExportCsv { get; set; }
+    [Parameter] public EventCallback OnExportJson { get; set; }
+    [Parameter] public EventCallback<InputFileChangeEventArgs> OnImport { get; set; }
+    [Parameter] public EventCallback OnAddToComparison { get; set; }
+
+    private RunPlotSet? _renderedPlots;
+    private bool _renderedRunning;
+
+    protected override bool ShouldRender()
+    {
+        if (IsRunning && _renderedRunning && ReferenceEquals(_renderedPlots, Plots)) return false;
+        _renderedPlots = Plots;
+        _renderedRunning = IsRunning;
+        return true;
+    }
+}

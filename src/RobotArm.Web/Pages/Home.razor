@@ -1,6 +1,10 @@
 @page "/"
 @using System.Diagnostics
+@using System.Text
 @implements IDisposable
+@inject LabState _state
+@inject RunHistory _history
+@inject IJSRuntime JS
 
 <PageTitle>KON 445E — 4-DOF Robot Kol Sanal Laboratuvarı</PageTitle>
 
@@ -53,7 +57,34 @@
                      Snapshot="_snapshot"
                      LatestRow="_latestRow"
                      Result="_result" />
+
+        <MetricsPanel Result="_result"
+                      Kind="_resultScenario?.Task.Kind"
+                      IsRunning="_isRunning" />
     </div>
+</div>
+
+<div class="lab-analysis">
+    <AnalysisPanel Plots="_plots"
+                   IsRunning="_isRunning"
+                   LogScale="_logScale"
+                   Description="@AnalysisDescription"
+                   Hint="@AnalysisHint"
+                   CanExportCsv="@(!_isRunning && _runnerStarted && _runner.Log.Count > 0)"
+                   CanAddToComparison="@(!_isRunning && _result is not null && !_history.Contains(_result))"
+                   StatusMessage="@_fileStatus"
+                   StatusIsError="_fileStatusIsError"
+                   OnLogScaleChanged="SetLogScale"
+                   OnExportCsv="ExportCsvAsync"
+                   OnExportJson="ExportJsonAsync"
+                   OnImport="ImportJsonAsync"
+                   OnAddToComparison="AddToComparison" />
+
+    <ComparisonPanel Runs="_history.Runs"
+                     Version="_historyVersion"
+                     IsRunning="_isRunning"
+                     OnRemove="RemoveFromComparison"
+                     OnClear="ClearComparison" />
 </div>
 
 @code {
@@ -64,7 +95,9 @@
         double RenderMs,
         double SimSecondsAdvanced);
 
-    private readonly LabState _state = new();
+    /// <summary>T10: plots are rebuilt from the log at most this often during a Normal run.</summary>
+    private const double PlotRefreshSeconds = 0.2;
+
     private readonly ExperimentRunner _runner = new();
     private readonly Queue<FramePerfSample> _perfWindow = new();
 
@@ -82,6 +115,16 @@
     private RunResult? _result;
     private double _realTimeFactor;
     private double _fastComputeWallMs;
+
+    private RunPlotSet? _plots;
+    private long _plotsBuiltTimestamp;
+    private RunPlotSet? _pendingPlots;
+    private int _pendingIndex;
+    private bool _logScale;
+    private Scenario? _resultScenario;
+    private int _historyVersion;
+    private string? _fileStatus;
+    private bool _fileStatusIsError;
 
     private bool _measuringFrameRender;
     private long _renderStartTimestamp;
@@ -232,6 +275,8 @@
             _result = _runner.Result;
             _perfWindow.Clear();
             SyncFromRunner();
+            RefreshPlots(force: true);
+            UpdateResultScenario();
             if (_isFinished)
             {
                 _isRunning = false;
@@ -267,6 +312,7 @@
                 var simDelta = _runner.Current.Time - prevSimTime;
 
                 SyncFromRunner();
+                RefreshPlots(force: _runner.IsFinished);
 
                 if (_runner.IsFinished)
                 {
@@ -274,6 +320,7 @@
                     _isRunning = false;
                     _isPaused = false;
                     _result = _runner.Result;
+                    UpdateResultScenario();
                     BeginFrameRenderMeasurement(frameStart, wallElapsed, advMs, simDelta);
                     StateHasChanged();
                     await Task.Yield();
@@ -358,6 +405,8 @@
             _realTimeFactor = totalSim / Math.Max(1e-5, sw.Elapsed.TotalSeconds);
 
             _result = res;
+            RefreshPlots(force: true);
+            UpdateResultScenario();
             _snapshot = res.Final;
             _latestRow = res.Log.Count > 0 ? res.Log[^1] : null;
             _isFinished = true;
@@ -384,6 +433,7 @@
         CancelLoop();
         _isRunning = false;
         _isPaused = true;
+        RefreshPlots(force: true);
     }
 
     private void StepRun()
@@ -410,6 +460,8 @@
         _isFinished = _runner.IsFinished;
         _result = _runner.Result;
         _isPaused = !_isFinished;
+        RefreshPlots(force: true);
+        UpdateResultScenario();
     }
 
     private void ResetRun()
@@ -424,6 +476,217 @@
         _result = null;
         _realTimeFactor = 0;
         _fastComputeWallMs = 0;
+        _plots = null;
+        _pendingPlots = null;
+        _resultScenario = null;
+    }
+
+    /// <summary>
+    /// Rebuilds the plots from the runner's log: always when forced (run end, pause, step), otherwise at most
+    /// every <see cref="PlotRefreshSeconds"/> (5 Hz) so that a Normal run keeps its real-time factor.
+    /// During a run the four new plots are handed to the page one per animation frame, so that no single
+    /// frame pays for redrawing all four (measured in T10: about 20 ms when all four changed at once).
+    /// </summary>
+    private void RefreshPlots(bool force)
+    {
+        if (!_runnerStarted)
+        {
+            _plots = null;
+            _pendingPlots = null;
+            return;
+        }
+        var now = Stopwatch.GetTimestamp();
+        if (force)
+        {
+            _plotsBuiltTimestamp = now;
+            _plots = RunPlots.Build(_runner.Log, _logScale);
+            _pendingPlots = null;
+            return;
+        }
+        if (_pendingPlots is null)
+        {
+            if (_plots is not null && Stopwatch.GetElapsedTime(_plotsBuiltTimestamp, now).TotalSeconds < PlotRefreshSeconds)
+            {
+                return;
+            }
+            _plotsBuiltTimestamp = now;
+            _pendingPlots = RunPlots.Build(_runner.Log, _logScale);
+            _pendingIndex = 0;
+        }
+        var p = _pendingPlots;
+        _plots = _plots is null ? p : _pendingIndex switch
+        {
+            0 => _plots with { Angles = p.Angles, RowCount = p.RowCount },
+            1 => _plots with { Errors = p.Errors },
+            2 => _plots with { Torques = p.Torques },
+            _ => _plots with { ToolError = p.ToolError }
+        };
+        if (++_pendingIndex == 4 || ReferenceEquals(_plots, p))
+        {
+            _pendingPlots = null;
+        }
+    }
+
+    private void UpdateResultScenario()
+    {
+        if (_result is null)
+        {
+            _resultScenario = null;
+            return;
+        }
+        try
+        {
+            _resultScenario = ScenarioJson.Deserialize(_result.ScenarioJson);
+        }
+        catch (Exception)
+        {
+            _resultScenario = null;
+        }
+    }
+
+    private void SetLogScale(bool on)
+    {
+        _logScale = on;
+        if (_plots is not null && !_isRunning)
+        {
+            RefreshPlots(force: true);
+        }
+    }
+
+    private string? AnalysisDescription => _resultScenario?.Description ?? _state.Description;
+
+    private string? AnalysisHint => ScenarioHints.For(_resultScenario?.Name ?? _state.Name);
+
+    private void AddToComparison()
+    {
+        if (_result is null || _resultScenario is null) return;
+        var dropped = _history.Add(_result, _resultScenario);
+        _historyVersion++;
+        SetFileStatus(dropped is null
+            ? $"\"{_resultScenario.Name}\" karşılaştırmaya eklendi."
+            : $"\"{_resultScenario.Name}\" eklendi; liste dolu olduğu için en eski koşu (#{dropped.Id}) çıkarıldı.", false);
+    }
+
+    private void RemoveFromComparison(int id)
+    {
+        _history.Remove(id);
+        _historyVersion++;
+    }
+
+    private void ClearComparison()
+    {
+        _history.Clear();
+        _historyVersion++;
+    }
+
+    private void SetFileStatus(string? message, bool isError)
+    {
+        _fileStatus = message;
+        _fileStatusIsError = isError;
+    }
+
+    /// <summary>The CSV log of the run (finished or paused), written by Core's CsvLogWriter (SPEC §10).</summary>
+    private async Task ExportCsvAsync()
+    {
+        if (!_runnerStarted || _isRunning || _runner.Log.Count == 0) return;
+        var writer = new StringWriter(CultureInfo.InvariantCulture);
+        CsvLogWriter.Write(writer, _runner.Log);
+        var name = _resultScenario?.Name ?? _state.Name;
+        await DownloadAsync($"{FileSlug(name)}-log.csv", "text/csv", writer.ToString());
+        SetFileStatus($"CSV kaydı indirildi ({_runner.Log.Count} örnek).", false);
+    }
+
+    /// <summary>The scenario of the finished run if there is one, otherwise the current setup.</summary>
+    private async Task ExportJsonAsync()
+    {
+        string json;
+        string name;
+        if (_result is not null)
+        {
+            json = _result.ScenarioJson;
+            name = _resultScenario?.Name ?? _state.Name;
+        }
+        else
+        {
+            _state.RecomputeValidation();
+            if (_state.ValidationErrors.Count > 0)
+            {
+                SetFileStatus("Senaryo dışa aktarılamadı: önce kurulumdaki doğrulama hatalarını düzeltin.", true);
+                return;
+            }
+            try
+            {
+                json = ScenarioJson.Serialize(_state.BuildScenario());
+                name = _state.Name;
+            }
+            catch (Exception ex)
+            {
+                SetFileStatus(LabState.TranslateCoreException(ex), true);
+                return;
+            }
+        }
+        await DownloadAsync($"{FileSlug(name)}.scenario.json", "application/json", json);
+        SetFileStatus(_result is not null
+            ? "Bitmiş koşunun senaryosu JSON olarak indirildi; yüklenince aynı koşu aynen tekrarlanır."
+            : "Geçerli kurulum JSON olarak indirildi.", false);
+    }
+
+    /// <summary>Loads a scenario JSON (ScenarioJson validates it) into the setup, ready to repeat the run.</summary>
+    private async Task ImportJsonAsync(InputFileChangeEventArgs e)
+    {
+        if (_isRunning) return;
+        try
+        {
+            await using var stream = e.File.OpenReadStream(maxAllowedSize: 1_000_000);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            var json = await reader.ReadToEndAsync();
+            var scenario = ScenarioJson.Deserialize(json);
+            if (scenario.Task.Branch != ElbowBranch.Up)
+            {
+                SetFileStatus("Bu senaryo dirsek-aşağı IK kolunu kullanıyor; laboratuvar arayüzü yalnız dirsek-yukarı kolu destekler.", true);
+                return;
+            }
+            _state.LoadScenario(scenario, recomputeStabilityNow: false);
+            HandleScenarioChanged();
+            SetFileStatus($"\"{scenario.Name}\" yüklendi ({e.File.Name}). Aynı koşuyu tekrarlamak için Başlat'a basın.", false);
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            SetFileStatus($"JSON yüklenemedi: dosya geçerli bir senaryo JSON'u değil ({ex.Message.Split('\n')[0]}).", true);
+        }
+        catch (ArgumentException ex)
+        {
+            // Core's validation (ScenarioJson.Deserialize → Scenario.Validate); drop the parameter-name suffix.
+            var message = ex.Message;
+            foreach (var cut in new[] { " (Parameter", " Arg_ParamName" })
+            {
+                var i = message.IndexOf(cut, StringComparison.Ordinal);
+                if (i > 0) message = message[..i];
+            }
+            SetFileStatus("JSON yüklenemedi: " + LabState.TranslateCoreException(new ArgumentException(message)), true);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or NotSupportedException)
+        {
+            SetFileStatus($"JSON yüklenemedi: dosya okunamadı ({ex.Message}).", true);
+        }
+    }
+
+    private async Task DownloadAsync(string fileName, string mimeType, string text)
+    {
+        await JS.InvokeVoidAsync("robotArmFiles.download", fileName, mimeType, Encoding.UTF8.GetBytes(text));
+    }
+
+    private static string FileSlug(string name)
+    {
+        var sb = new StringBuilder();
+        foreach (var ch in name.ToLowerInvariant())
+        {
+            var c = ch switch { 'ç' => 'c', 'ğ' => 'g', 'ı' => 'i', 'ö' => 'o', 'ş' => 's', 'ü' => 'u', _ => ch };
+            if (c is >= 'a' and <= 'z' or >= '0' and <= '9') sb.Append(c);
+            else if (sb.Length > 0 && sb[^1] != '-') sb.Append('-');
+        }
+        var slug = sb.ToString().Trim('-');
+        return slug.Length == 0 ? "deney" : slug;
     }
 
     private void SyncFromRunner()
