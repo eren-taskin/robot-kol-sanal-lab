@@ -56,7 +56,10 @@ public sealed class Pid : IController, ILinearisableController
         [0.3, 0.6, 0.3, 0.05]);
 
     /// <summary>The controller's model (SPEC §5.6).</summary>
-    public ControllerBelief Belief { get; }
+    public ControllerBelief Belief { get; private set; }
+
+    /// <summary>Records an informed payload update without resetting the integrator; PID uses only torque limits. SPEC §8.3.</summary>
+    public void SetPayloadBelief(double payloadKg) => Belief = new ControllerBelief(Belief.BaseModel, Belief.Planet, payloadKg);
 
     /// <summary>The gains.</summary>
     public PidGains Gains { get; }

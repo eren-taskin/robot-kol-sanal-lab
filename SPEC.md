@@ -307,6 +307,7 @@ All controllers implement one interface: given time, measured q and q̇, and the
 | PID | Independent-joint PID | ui = Kp,i ei + Ki,i ∫ei dt + Kd,i ėi, clamped to ±τmax,i. Anti-windup by conditional integration: on a joint whose output it clamped, the controller keeps the old integral for that sample. The integral is a rectangle sum over the time between samples (nothing at the first sample). No gravity model. |
 | PDG | PD + gravity compensation | u = Kp e + Kd ė + ĝ(q), clamped |
 | CT | Computed torque | u = M̂(q̄)(q̈_d + Kd ė + Kp e) + ĥ(q̄, q̄̇) + τ̂f(q̄̇), clamped. τ̂f is the friction of §5.4 with the belief's parameters. (q̄, q̄̇) is the measured state predicted to the middle of the hold: with a = q̈_d + Kd ė + Kp e and Δt the time since the previous sample, q̄ = q + q̇·Δt/2 + a·Δt²/8, q̄̇ = q̇ + a·Δt/2. The prediction is an option, on by default; without it q̄ = q and q̄̇ = q̇, the textbook law. |
+| CT+I | Optional integral computed torque | Same CT law and prediction, with a = q̈_d + Kd ė + Kp e + Ki ∫e. Off by default. Candidate rectangle integral uses elapsed sample time (zero at the first sample); a joint whose candidate output is clamped keeps its old integral, as in PID. |
 | ADP | Adaptive (Slotine–Li), optional | estimates the payload mass online |
 
 e = q_d − q and ė = q̇_d − q̇ with the measured q and q̇. Hats mean the controller's own model (Section 5.6). Gains are per joint (diagonal matrices).
@@ -328,6 +329,9 @@ Linearised at rest at q0 with the constant reference q_d = q0 (used by §6.3), e
 | PID Ki | 5 | 20 | 20 | 8 | N·m/(rad·s) |
 | CT Kp | 144 | 144 | 144 | 144 | 1/s² (ωn = 12 rad/s) |
 | CT Kd | 24 | 24 | 24 | 24 | 1/s (ζ = 1) |
+| CT+I Kp | 1600 | 1600 | 1600 | 1600 | 1/s² |
+| CT+I Kd | 80 | 80 | 80 | 80 | 1/s |
+| CT+I Ki | 6400 | 6400 | 6400 | 6400 | 1/s³ |
 
 **Measured with these gains** (T07; perfect sensor, default h = 0.5 ms and Ts = 2 ms). Settling time in s for A→B / B→A; C = the controller clamped its output; F = fault (§6.4); ">2" = not settled after 2 s.
 
@@ -356,12 +360,15 @@ Sampled-loop stability (§6.3) at the poses A, B and C = [0.5, −1.0, 0.3, 0.7]
 
 The smallest MaxStableTs, 6.5 ms at pose A without payload, is set by the yaw joint, whose inertia m11 = 8.1e-4 kg·m² is small when the arm leans back over the base. ρ close to 1 at 2 ms means slow modes, not a stability problem: ρ = e^{−σ·Ts} with σ ≈ 3–11 1/s, the decay rate of the slowest mode.
 
+**CT+I robustness option (T08, D8).** Enabling CT+I in a scenario selects the separately tuned defaults above, unless gains are explicitly supplied. Simply adding a large Ki to CT's original Kp/Kd can destabilise the forgotten-payload case; those original CT defaults remain unchanged. In V18(b), with plant 0.3 kg and belief 0 kg, the same 1 s quintic and 0.5 s hold (end t = 1.5 s) give maximum final joint errors: ordinary CT **0.7287002454 rad**, CT+I **0.0082152550 rad** (< 1e-2), and CT with CT+I's Kp/Kd but Ki = 0 **0.5998464402 rad**. All are fault-free. Peak errors over the run are 1.119293392 rad for ordinary CT and 0.6293174683 rad for CT+I: this is rejection of a persistent disturbance, not elimination of the initial transient. The library runs the same move to 10 s to demonstrate task-level settling. The PD-only linearisation excludes the integral state, as for PID; the existing MaxStableTs results are not an augmented CT+I stability guarantee.
+
 ## 8. References, tasks and scenarios
 
 ### 8.1 Trajectories
 
 - Joint space: quintic polynomial between two configurations, zero speed and acceleration at both ends, duration chosen by the user or from a speed limit.
-- Cartesian straight line: the tool point moves on a straight line with a quintic time law. Joint references come from inverse kinematics at each controller sample, with fixed tool pitch and branch. Fails cleanly if any point is unreachable.
+- Cartesian line or horizontal XY circle: quintic time law (one turn for a circle), zero endpoint speed/acceleration and fixed tool pitch/branch. IK supplies joint positions at every sample. Analytic Cartesian velocity and acceleration are transformed using Jp⁻¹ and analytic J̇p q̇; near-singular samples are refused using §4.4's threshold, including the yaw-axis singularity. Unreachable, limit-violating, singular or yaw-branch-cut paths produce a named task failure.
+- Reach and both PickPlace legs always use joint quintics. Track uses a Cartesian line or circle and holds the last point after completion. Hold starts at its reference pose. No task introduces a step reference; the discontinuous criterion experiments in §7 remain separate controller tests.
 
 ### 8.2 Tasks
 
@@ -372,26 +379,43 @@ The smallest MaxStableTs, 6.5 ms at pose A without payload, is set by the yaw jo
 | Track | Follow a circle or line with the tool point | RMS tool error below a threshold set per task |
 | Hold | Hold a pose while a disturbance torque pulse acts | return within 2 mm in 1 s |
 
+PickPlace begins with a detached object at A. It approaches A over `MotionDuration`, then holds until the measured true tool satisfies §5.5's 10 mm / 0.05 m/s pickup gate. Attachment occurs at a controller sample boundary (also a plant step boundary), and a second quintic starts from the first leg's exact endpoint with zero reference velocity/acceleration. After this leg, release requires distance to B ≤ 5 mm and speed < 0.05 m/s. Each event has a configurable timeout (default 2 s); the object remains at its actual release position. Zero-mass objects still have an attachment state. No fault is ignored after release; the arm keeps holding until the run ends.
+
+Hold applies a configurable external joint torque pulse **after motor saturation**, separately from actuator torque. It succeeds only when the pose returns within 2 mm no later than 1 s after the pulse ends and stays there to the run end; the run must cover that deadline. With the pulse disabled, the pose must stay within 2 mm throughout the logged run.
+
 ### 8.3 Scenario
 
-A scenario is the full description of one experiment: environment, payload(s), task, controller and gains, controller's model, h, Ts, sensor options, random seed, duration. It is serialisable to JSON so that any run can be repeated exactly.
+A `Scenario` record contains environment (including custom g), payload, task geometry and timing, controller and optional gain overrides, independent belief (g, body mass/inertia scale, initial payload), h, Ts, sensor options, seed, duration, Turkish name and explanation. Null gain overrides select the documented law-specific defaults; a null belief g/payload selects the initial true value. `ScenarioJson` uses System.Text.Json with named enums, vector support and validation. Record/value data cannot retain caller-owned mutable arrays.
+
+Payload knowledge is selectable: **Informed** updates the controller's payload belief at PickPlace attachment/release, without resetting integral or sample history; **Unaware** retains its initial payload belief throughout. Other belief parameters never change. PickPlace's plant initially has no payload; the scenario's payload is the object mass. Other tasks start with that payload attached.
+
+Duration must be finite, in **(0, 60] simulated seconds**, and an integer multiple of h. h obeys §6.2; Ts must be a positive integer multiple of h. Validate initial joint limits/floor, finite settings, enum values, nonnegative gains/noise/filter settings and payload in 0..0.5 kg before running. Unreachable task targets/paths return a failed result with a reason, rather than a physics exception.
+
+`ExperimentRunner.Run(scenario)` and `Start(scenario)`, `AdvanceBy(simSeconds)`, `Current`, `IsFinished` use the same state machine. Start computes the t=0 sample. AdvanceBy accumulates fractional h remainders across calls and advances whole h steps only, never beyond duration; zero is a no-op and invalid/nonfinite increments are rejected. Current is an allocation-free state snapshot for animation; Log is a read-only live view and Result is available on completion. Restarting creates new storage, preserving prior results. No wall clock or UI dependency enters Core.
+
+ScenarioLibrary provides eight Turkish-named experiments (tested against their declared outcomes): Dünya – boş kol – noktaya git; Ay – 0,3 kg – al ve bırak; Mars – çember izleme; Yüksek g – 0,5 kg – tutma (doyum); Yörünge – noktaya git; Yanlış model – CT, 0,3 kg habersiz yük; Yanlış model düzeltildi – CT+I, 0,3 kg habersiz yük; Örnekleme – Ts sınırına yakın. The last uses exactly 0.9 × MaxStableTs at its initial pose, with h chosen to divide Ts and a small disturbance at that pose. Explanations state the expected successes and the overload/model-mismatch failures.
 
 ## 9. Metrics
 
-Computed by the core from the logged run, not by the UI:
+Computed by `RunMetrics` from the logged true states (not sensor readings). Each sample is weighted by its actual held interval, including a shortened final interval or a fault between samples:
 
-- RMS joint error and maximum joint error, per joint
-- tool position error: RMS, maximum, final
-- settling time (tool within 2 mm and stays), overshoot
-- peak |τ| per joint and percentage of time in saturation
-- mechanical energy delivered ∫ Σ |τi q̇i| dt
-- task success and the reason for failure
+- RMS and maximum absolute joint-reference error, per joint (rad).
+- Tool-reference distance: RMS, maximum, final (m); final means the last logged sample. Track also reports RMS over its moving interval only, so a long final hold cannot dilute tracking error.
+- Settling time is an absolute time from run start: the first logged sample at/after the final reference hold begins from which tool distance to the fixed final target remains ≤ 2 mm until the end. Null means no settling. Reach additionally requires 0.5 s of this final hold. A fault always makes the task fail even if a settling number exists for its truncated log.
+- Overshoot (m): largest positive projection beyond the final target onto the unit direction from initial tool position to final target; zero for a zero-length move (including a circle returning to its start).
+- Peak |τ| per joint; time percentages of controller clamping and physical motor saturation separately, per joint; percentage with any controller joint clamped. These are not interchangeable (D6).
+- Mechanical energy delivered: left-rectangle sample estimate Σk Δtk Σi |τi,k q̇i,k| (J), using motor torque only, excluding external disturbance torque.
+- Payload attachment/release transition counts and maximum attached mass, derived from the log.
+- `RunResult` includes task success, the task/fault failure reason, the physical fault (if present), and the actual terminal state. A failed target before the first sample has an empty log and zero aggregate metrics, with no settling time.
+
+The Report-category test runs Reach and PickPlace for PID, PDG, CT and CT+I on every planet with 0, 0.1, 0.3 and 0.5 kg (160 runs, informed belief), writing `docs/results/robustness.csv`. CI excludes Category=Report; run it explicitly in Release to regenerate the report and measure a warmed 10 s Earth PickPlace CT run.
 
 ## 10. Logging
 
-- One row per controller sample: t, q (4), q̇ (4), q_d (4), u (4), τ applied (4), saturation flags, tool x y z, payload attached.
-- CSV with a header line, InvariantCulture, `.` as decimal separator.
-- The scenario JSON is stored with the log.
+- Exactly one `LogRow` per controller sample at t=k·Ts < duration, including t=0. All state/reference columns describe that instant, **before** integration with the new command. No synthetic terminal/controller row is appended at a fault or at duration.
+- Columns: sample time and actual held interval; q, q̇, q_d, q̇_d, q̈_d; controller command u and applied motor τ; separate controller clamp and plant saturation flags per joint; true and reference tool xyz; attachment flag, true and believed payload kg; task phase, object xyz, and external disturbance torque at the sample.
+- Rows are value types in storage reserved at Start. Normal controller samples, trajectory evaluation, logging and plant steps allocate nothing; payload events rebuild model buffers, and completion allocates the result/metrics.
+- `CsvLogWriter.Write(TextWriter, log)` writes a header and one row per sample with InvariantCulture and round-trip numeric formatting (`.` decimal separator); no file path API in Core. The complete scenario JSON is stored in RunResult beside the log for paired export/replay.
 
 ## 11. Verification
 
@@ -414,10 +438,10 @@ Each item is an automated test in `RobotArm.Tests`. Tolerances in brackets.
 | V13 | Statics: τ = g(q) holds the arm still for 1 s on every planet, payload 0 and 0.5 kg, default friction, default h (max |q̇| < 1e-9) | report §3.7 |
 | V14 | Payload combination: total mass, combined centre of mass and inertia match a hand calculation; `poses` with `payload_kg = 0.5` match | §5.5 |
 | V15 | Saturation: commanded 10 N·m is applied as 4.1 N·m and flagged | §5.4 |
-| V16 | Determinism: same scenario and seed give identical logs (T07: the control loop with encoder noise and filter gives bit-identical logs with the same seed, different ones with another seed; T08 adds the scenario) | §8.3 |
+| V16 | Full Scenario JSON round trip and identical seed produce bit-identical logs, including PickPlace events with noisy filtered encoders; synchronous and irregular frame batches agree, while a different seed changes the log | §8.3 |
 | V17 | PDG, Earth, no payload, perfect sensor: the 0.5 rad step A → B of §7 ends with final error < 1e-3 rad | §7 |
 | V18 | CT (default gains and prediction), perfect sensor, quintic [0, −0.4, −0.3, 1.1] → [0, 0.1, −0.8, 0.6] rad in 1 s, held to 1.5 s (tool at least 0.15 m above the floor and inside the joint limits along the path): (a) exact model, max error < 1e-3 rad; (b) plant 0.3 kg, belief 0 kg and (c) plant 0 kg, belief 0.3 kg, max error at least 5 times (a); all three without a fault. The same runs with the textbook CT are reported | §7 |
-| V19 | HighG with 0.5 kg payload at horizontal reach: gravity torque exceeds τmax (the vectors give 6.84 N·m on joint 2), and the hold test reports saturation | §3.5 |
+| V19 | HighG, 0.5 kg, Hold at test_vectors.json horizontal_reach_pose (verified inside all joint limits), pulse off: joint-2 gravity torque magnitude ≈ 6.84 N·m > 4.1; PDG reports controller clamping on joint 2 from t=0. Task fails (pose not held within 2 mm, or floor fault) with a recorded failure reason | §7–§9 |
 
 V9 and V10 are the checks that matter most. A free arm is chaotic, so long runs are judged by conserved quantities, never by comparing trajectories.
 
@@ -433,5 +457,17 @@ Added in T07:
 | V26 | Default gains: ρ < 1 at Ts = 2 ms and MaxStableTs > 2 ms for every planet × payload (0, 0.5 kg) × poses A, B, C (PID wherever its continuous loop is stable); on Earth without payload at A, B, C, ρ < 1 at 0.99 × and ρ > 1 at 1.01, 2 and 4 × MaxStableTs | §6.3 |
 | V27 | Prediction against simulation: holding pose B from a 1e-4 rad offset, the simulated error grows at 1.1 × MaxStableTs and decays at 0.9 × MaxStableTs (PDG 0 and 0.5 kg, CT) | §6.3 |
 | V28 | Compute, Measure and one control-loop sample allocate nothing | PROJECT §3 |
+
+Added in T08:
+
+| # | Test | Source |
+|---|---|---|
+| V29 | V18(b), same 1 s move + 0.5 s hold: CT+I with its §7 defaults has final max joint error < 1e-2 rad without fault; report ordinary CT and same-PD-gain CT without I | §7 |
+| V30 | Earth CT success for all four tasks; Track line and circle; PickPlace attachment/release and informed/unaware belief logs; every library scenario matches its Turkish explanation | §8 |
+| V31 | Quintic endpoint conditions and input copying; Cartesian path, analytic derivatives vs central differences, unreachable/singular/branch-cut failures; continuous PickPlace references across events | §8.1 |
+| V32 | Log-derived metrics agree with hand calculations, including partial sample weights, moving-only Track RMS, clamping vs saturation and payload transitions | §9 |
+| V33 | Exactly one row per controller sample, partial final interval, validated duration ≤60 s; complete CSV numeric round trip under Turkish culture; custom scenario/gain/belief JSON round trip | §8.3, §10 |
+| V34 | CT+I conditional integration, reset, payload-update state preservation, off-by-default regression; normal runner steps including logging allocate nothing | §7, §10 |
+| V35 | Report category (excluded from CI): 160-run informed robustness CSV and Release 10 s Earth PickPlace CT wall-clock measurement | §9 |
 
 Optional V20: cross-check against MuJoCo using the same URDF and the same torque input (Python, outside the C# solution).

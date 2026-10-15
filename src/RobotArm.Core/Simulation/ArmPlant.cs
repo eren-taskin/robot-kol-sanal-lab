@@ -31,6 +31,7 @@ public sealed class ArmPlant : IPlant
 
     private readonly double[] _massMatrix;
     private readonly double[] _rhs;
+    private readonly double[] _disturbance;
     private readonly double[] _appliedTorque;
     private readonly bool[] _saturated;
 
@@ -61,8 +62,18 @@ public sealed class ArmPlant : IPlant
 
         _massMatrix = new double[_n * _n];
         _rhs = new double[_n];
+        _disturbance = new double[_n];
         _appliedTorque = new double[_n];
         _saturated = new bool[_n];
+    }
+
+    /// <summary>External joint torque, applied after motor saturation for a Hold disturbance. SPEC §8.2.</summary>
+    public void SetDisturbance(ReadOnlySpan<double> torque)
+    {
+        if (torque.Length != _n) throw new ArgumentException("Expected one disturbance torque per joint.", nameof(torque));
+        foreach (var value in torque)
+            if (!double.IsFinite(value)) throw new ArgumentOutOfRangeException(nameof(torque));
+        torque.CopyTo(_disturbance);
     }
 
     /// <summary>The arm without payload. SPEC §3, §4.1.</summary>
@@ -159,7 +170,7 @@ public sealed class ArmPlant : IPlant
             _appliedTorque[i] = tau;
 
             var friction = _viscousFriction[i] * qd[i] + _coulombFriction[i] * Math.Tanh(qd[i] / _smoothingSpeed[i]);
-            _rhs[i] = tau - friction - _rhs[i];
+            _rhs[i] = tau + _disturbance[i] - friction - _rhs[i];
         }
 
         Cholesky.FactorAndSolve(_massMatrix, _n, _rhs);

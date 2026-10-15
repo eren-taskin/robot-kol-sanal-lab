@@ -182,23 +182,34 @@ Done when: build and all tests pass. Report the metrics of the 6 library scenari
 
 ---
 
-## T09 — Web: layout, run loop, arm drawing  ·  Antigravity (Gemini)
+## T09 — Web: layout, run loop, arm drawing, design helper  ·  Antigravity (Gemini)
 
 ```
-Read PROJECT.md and SPEC.md completely. Do only task T09. Work in src/RobotArm.Web only. Do not change Core; if Core lacks something, stop and report it.
+Read PROJECT.md, SPEC.md and docs/DECISIONS.md completely. Do only task T09. Work in src/RobotArm.Web only. Do not change Core; if Core lacks something, stop and report it.
 
-Goal: the first usable page of the online laboratory. Language of the UI: Turkish.
+Goal: the first usable page of the online laboratory. UI language: Turkish. Numbers shown with a decimal comma are fine on screen, but every number parsed or exported uses InvariantCulture.
 
 Do:
-1. Layout: left panel for the experiment setup (scenario library dropdown, planet, payload kg, task, controller, gains, h and Ts, sensor options), centre for the arm view, right or bottom for live numbers. Must work on a laptop screen and be usable on a tablet.
-2. Arm view: two SVG views drawn from Core's forward kinematics frames, side view (r–z plane) and top view (x–y), with the target, the object, the floor, and the payload when attached. Scales in mm.
-3. Run loop per PROJECT.md §2 rule 4: Start / Pause / Step / Reset; each animation frame advances simulated time by a fixed slice through ExperimentRunner's stepwise API, then redraws. Show simulated time and real-time factor.
-4. Input validation in the UI (number ranges from SPEC), plus Core's own validation; show Core's error messages in Turkish next to the field.
-5. A fault (SPEC §6.4) stops the run and shows the reason.
+1. Layout: left panel for the experiment setup, centre for the arm view, right or bottom for live numbers. Usable on a laptop and on a tablet.
+   Setup panel: ScenarioLibrary dropdown (loads all fields), planet (or custom g), payload kg, task and its targets, controller type (PID, PDG, CT, CT+I), the CT "örneklemeye duyarlı / ders kitabı" option, belief (informed / unaware, and a belief payload override for model-mismatch runs), gains per joint, h, Ts, sensor (perfect / encoder, filter time constant, noise), seed, duration.
+   Do not offer the elbow-down IK branch in the UI (it is almost entirely outside the joint limits, see T03).
+2. Arm view: two SVG views drawn from Core's ForwardKinematics frames: side view (r–z plane) and top view (x–y). Show target, object, floor, payload when attached, and the joint-limit state (a joint near its limit turns amber). Scales in mm.
+3. Run loop per PROJECT.md §2 rule 4: Start / Pause / Step / Reset. Each animation frame advances simulated time by a fixed slice through ExperimentRunner's stepwise API, then redraws. Show simulated time and real-time factor. A "hızlı" mode runs the whole scenario first and then plays it back.
+4. Stability panel, always visible, recomputed whenever a relevant field changes:
+   - RK4 step check: StabilityEstimate.MaxStableStep at the start pose; warning when h exceeds it.
+   - Sampled loop: SampledLoopStability ρ at the chosen Ts and MaxStableTs at the start pose; red when ρ ≥ 1.
+   - Torque budget: gravity torque at the start pose versus τmax per joint; warning when above 80 %.
+   Write each warning as one plain Turkish sentence that says what will happen and what to change.
+5. Design helper (Tasarım yardımcısı): per joint, the student enters ωn (rad/s) and ζ. The page computes gains and fills the gain fields:
+   - CT / CT+I: Kp = ωn², Kd = 2ζωn (and Ki = ωn³/10 for CT+I as a starting value).
+   - PD / PDG / PID: Kp = M̂ii ωn², Kd = 2ζωn M̂ii, with M̂ii the diagonal of the belief's inertia matrix at the start pose (state this approximation on screen).
+   The stability panel updates immediately, so the student sees the effect before running.
+6. Input validation in the UI (ranges from SPEC), plus Core's own validation; show Core's error messages in Turkish next to the field.
+7. A fault (SPEC §6.4) stops the run and shows the reason.
 
 No charting yet. No new packages without asking.
 
-Done when: dotnet build passes, dotnet test still passes, and the page runs the library scenarios. Describe how you tested it in the browser.
+Done when: dotnet build passes, dotnet test still passes, and every library scenario runs in the page. Describe how you tested it in the browser. Set T09 to "done" in PROJECT.md §7, and add a row "T10b | Kendi kontrolcün (student-written controller) | — | not started" between T11 and T12.
 ```
 
 ---
@@ -206,18 +217,19 @@ Done when: dotnet build passes, dotnet test still passes, and the page runs the 
 ## T10 — Web: plots, metrics, comparison, export  ·  Antigravity (Gemini)
 
 ```
-Read PROJECT.md and SPEC.md completely. Do only task T10. Work in src/RobotArm.Web only.
+Read PROJECT.md, SPEC.md and docs/DECISIONS.md completely. Do only task T10. Work in src/RobotArm.Web only.
 
 Goal: the analysis half of the laboratory.
 
 Do:
-1. Plots against time: joint angles with references, joint errors, torques with the ±4.1 N·m limits drawn, tool position error. Either a hand-written SVG/canvas plot component or ONE charting library; if a library, name it and its version and why, before installing.
+1. Plots against time: joint angles with references, joint errors, torques with the ±4.1 N·m limits drawn and clamped intervals shaded, tool position error. Mark payload attach/release events with a vertical line. Either a hand-written SVG/canvas plot component or ONE charting library; if a library, name it, its version and why, before installing.
 2. Metrics panel (SPEC §9) with success / failure and reason.
 3. Run comparison: keep up to 4 finished runs in memory, overlay a chosen signal from each, and show their metrics side by side.
 4. Export: the run's CSV log and scenario JSON as downloads. Import: load a scenario JSON to repeat a run exactly.
-5. A short "Bu deney ne gösteriyor?" text block for each library scenario, written in Turkish for a control student.
+5. Show each library scenario's Turkish "what it shows" text, and add a short "Ne gözlemlemelisin?" hint (2–3 sentences) under the plots for each.
+6. Robustness map page: load docs/results/robustness.csv (copy it into wwwroot at build time) and show it as a heat map: rows controller, columns planet × payload, colour by success and settling time.
 
-Done when: build and tests pass and the comparison works for the "Yanlış model" scenario against its correct-model twin.
+Done when: build and tests pass and the comparison works for "Yanlış model – CT" against "Yanlış model düzeltildi – CT+I". Set T10 to "done" in PROJECT.md §7.
 ```
 
 ---
@@ -231,13 +243,40 @@ Goal: the laboratory is reachable at https://<github-user>.github.io/<repo>/ fro
 
 Do:
 1. A workflow that on push to main runs the tests, publishes RobotArm.Web in Release, fixes the base href for the repository sub-path, adds .nojekyll and a 404.html fallback, and deploys to GitHub Pages.
-2. Tell me exactly which repository settings I must change by hand (Settings → Pages → Source).
+2. Tell me exactly which repository settings I must change by hand (Settings → Pages → Source). Note that GitHub Pages on a private repository needs a paid plan or GitHub Education benefits; say what the options are.
 
-Done when: the workflow file exists and you have explained the manual steps.
+Done when: the workflow file exists and you have explained the manual steps. Set T11 to "done" in PROJECT.md §7.
+```
+
+---
+
+## T10b — "Kendi kontrolcün" (student-written controller)  ·  any tool
+
+Run only after T11, so a working laboratory is already published.
+
+```
+Read PROJECT.md, SPEC.md and docs/DECISIONS.md completely. Do only task T10b. Core may get one small addition (item 3); everything else is in src/RobotArm.Web.
+
+Goal: a student can write their own control law in the browser and compare it with the built-in controllers using the same metrics.
+
+Do:
+1. A "Kendi kontrolcün" controller type. Selecting it shows a code editor (a plain textarea with a monospace font is acceptable; a small editor library only if you name it first) prefilled with a working PD + gravity example:
+     function kontrol(t, q, qd, ref, model) { ... return u; }
+   ref has q, qd, qdd (arrays of 4). model has M(q) (4x4), gravity(q) (4), bias(q, qd) (4), all computed by Core from the controller's BELIEF, never from the true plant.
+2. A JsController in Web implementing Core's IController. Each Ts it calls the student's function through synchronous JS interop (IJSInProcessRuntime) and copies the result into u. model.* calls go back to .NET synchronously.
+3. Safety:
+   a. Before every run, a dry run in a Web Worker: 2000 calls with representative inputs; if it exceeds 500 ms, throws, or returns anything other than 4 finite numbers, refuse to start and show why in Turkish. This catches infinite loops before they can freeze the page.
+   b. During the run: non-finite output stops the run with a fault "Kontrolcün sayı olmayan bir değer döndürdü"; outputs are clamped to ±τmax by the existing rules and shown as clamping; a call slower than 5 ms is reported.
+   c. The student's code runs only in their own browser; nothing is sent anywhere.
+4. Equivalence test: a C#-side test cannot run JS, so add a small JS test page or a Playwright-free check in the browser: the prefilled PD + gravity example and the built-in PDG with the same gains give the same log to 1e-9 for the "Dünya – boş kol – noktaya git" scenario. Describe how you ran it.
+5. The student's code is saved in the scenario JSON (field customController), so export/import repeats the run exactly.
+6. Three example laws selectable from a menu: PD + gravity, computed torque written by hand, and a simple sliding-mode law with a boundary layer. Each with one Turkish comment line per step.
+
+Done when: build and tests pass, the equivalence check passes, and an infinite loop in the editor is refused without freezing the page. Add D-entry in DECISIONS.md. Set T10b to "done" in PROJECT.md §7.
 ```
 
 ---
 
 ## T12 and later
 
-T12 (experiments for the report), T13 (MuJoCo cross-check) and T14 (optional extensions) are written by the conductor when T11 is done, using what the earlier tasks reported.
+T12 (experiments for the report), T13 (MuJoCo cross-check) and T14 (optional extensions: 3D view, adaptive controller, 6-DOF data) are written by the conductor when T11 is done, using what the earlier tasks reported.

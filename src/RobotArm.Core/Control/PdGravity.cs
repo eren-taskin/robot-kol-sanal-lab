@@ -14,7 +14,7 @@ public sealed class PdGravity : IController, ILinearisableController
     private readonly double[] _kp;
     private readonly double[] _kd;
     private readonly double[] _torqueLimit;
-    private readonly RecursiveNewtonEuler _dynamics;
+    private RecursiveNewtonEuler _dynamics;
     private readonly Vector3d _gravity;
     private readonly double[] _zero;
     private readonly double[] _g;
@@ -52,7 +52,14 @@ public sealed class PdGravity : IController, ILinearisableController
         [0.3, 0.6, 0.3, 0.05]);
 
     /// <summary>The controller's model (SPEC §5.6).</summary>
-    public ControllerBelief Belief { get; }
+    public ControllerBelief Belief { get; private set; }
+
+    /// <summary>Updates only the payload belief at an attachment boundary. SPEC §8.3.</summary>
+    public void SetPayloadBelief(double payloadKg)
+    {
+        Belief = new ControllerBelief(Belief.BaseModel, Belief.Planet, payloadKg);
+        _dynamics = new RecursiveNewtonEuler(Belief.Model);
+    }
 
     /// <summary>The gains.</summary>
     public PdGains Gains { get; }

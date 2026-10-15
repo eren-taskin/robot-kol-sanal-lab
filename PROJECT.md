@@ -118,7 +118,7 @@ Course rule (Lecture Note 1, §8): every member must be able to explain and defe
 | T05 | Plant, solvers, simulation | Claude Code | done |
 | T06 | Independent review of T02–T05 | Antigravity | done |
 | T07 | Controllers and sampled loop | Claude Code | done |
-| T08 | Trajectories, tasks, scenario, metrics, logging | Claude Code | not started |
+| T08 | Trajectories, tasks, scenario, metrics, logging | Claude Code | done |
 | T09 | Web: layout, run loop, arm drawing | Antigravity | not started |
 | T10 | Web: plots, metrics, comparison, export | Antigravity | not started |
 | T11 | Publish to GitHub Pages | Claude Code | not started |

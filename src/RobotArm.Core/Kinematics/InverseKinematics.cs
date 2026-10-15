@@ -33,10 +33,13 @@ public enum FailureReason
 public readonly struct InverseKinematicsResult
 {
     private readonly double _q1, _q2, _q3, _q4;
+    private readonly bool _initialized;
+    private readonly FailureReason _failure;
 
     private InverseKinematicsResult(FailureReason reason, double q1, double q2, double q3, double q4, int limitJoint)
     {
-        Failure = reason;
+        _failure = reason;
+        _initialized = true;
         _q1 = q1; _q2 = q2; _q3 = q3; _q4 = q4;
         LimitJointIndex = limitJoint;
     }
@@ -45,7 +48,7 @@ public readonly struct InverseKinematicsResult
     public bool Success => Failure == FailureReason.None;
 
     /// <summary>Why the solve failed, or <see cref="FailureReason.None"/>.</summary>
-    public FailureReason Failure { get; }
+    public FailureReason Failure => _initialized ? _failure : FailureReason.Unreachable;
 
     /// <summary>
     /// Zero-based index of the first joint outside its limits when <see cref="Failure"/> is
@@ -141,9 +144,11 @@ public static class InverseKinematics
         var u = Math.Sqrt(position.X * position.X + position.Y * position.Y) - G.L4 * Math.Cos(pitch);
         var v = position.Z - G.D1 + G.L4 * Math.Sin(pitch);
         var cosPhi = (u * u + v * v - G.L2 * G.L2 - G.L3 * G.L3) / (2.0 * G.L2 * G.L3);
-        if (!(Math.Abs(cosPhi) <= 1.0))
+        // Permit only floating-point roundoff at the stretched/folded boundary (D8).
+        if (!(Math.Abs(cosPhi) <= 1.0 + 1e-14))
             return InverseKinematicsResult.Unreachable;
 
+        cosPhi = Math.Clamp(cosPhi, -1.0, 1.0);
         var phi = branch == ElbowBranch.Up ? -Math.Acos(cosPhi) : Math.Acos(cosPhi);
         var e = Math.Atan2(v, u) - Math.Atan2(G.L3 * Math.Sin(phi), G.L2 + G.L3 * Math.Cos(phi));
         var q2 = G.Beta - e;

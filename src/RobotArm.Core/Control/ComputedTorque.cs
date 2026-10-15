@@ -11,7 +11,8 @@ namespace RobotArm.Core.Control;
 /// </summary>
 /// <remarks>
 /// <para>
-/// a = q̈_d + Kd ė + Kp e is the commanded acceleration. M̂(q̄) a + ĥ(q̄, q̄̇) is one inverse-dynamics call
+/// a = q̈_d + Kd ė + Kp e + Ki ∫e is the commanded acceleration; Ki is zero unless explicitly enabled.
+/// CT+I uses conditional integration per joint: a clamped output keeps that joint's previous integral (D8). M̂(q̄) a + ĥ(q̄, q̄̇) is one inverse-dynamics call
 /// (RNEA, SPEC §5.2). The model's friction τ̂f,i = fv q̄̇i + fc tanh(q̄̇i/ωs) (SPEC §5.4, the belief's actuators)
 /// is part of the nonlinear terms that computed torque cancels. Without it the friction stays in the loop: near
 /// rest it is damping d = fv + fc/ωs = 0.21 N·m·s/rad, which on the light wrist joint (d/M44 ≈ 570 1/s) swamps Kd
@@ -37,7 +38,10 @@ public sealed class ComputedTorque : IController, ILinearisableController
     private readonly double[] _viscousFriction;
     private readonly double[] _coulombFriction;
     private readonly double[] _smoothingSpeed;
-    private readonly RecursiveNewtonEuler _dynamics;
+    private RecursiveNewtonEuler _dynamics;
+    private readonly double[] _ki;
+    private readonly double[] _integral;
+    private readonly double[] _candidate;
     private readonly Vector3d _gravity;
     private readonly double[] _acceleration;
     private readonly double[] _qPredicted;
@@ -49,10 +53,11 @@ public sealed class ComputedTorque : IController, ILinearisableController
     /// <summary>Creates the controller. SPEC §7.</summary>
     /// <param name="belief">The controller's model: M̂, ĥ, τ̂f and τmax come from it (SPEC §5.6).</param>
     /// <param name="gains">Kp in 1/s² and Kd in 1/s per joint.</param>
+    /// <param name="integralGains">Optional Ki in 1/s³; null disables integration (SPEC §7, D8).</param>
     /// <param name="predictHalfSample">Evaluate the model at the state predicted for the middle of the hold.</param>
     /// <exception cref="ArgumentNullException">An argument is null.</exception>
     /// <exception cref="ArgumentException">The gains are for another number of joints.</exception>
-    public ComputedTorque(ControllerBelief belief, PdGains gains, bool predictHalfSample = true)
+    public ComputedTorque(ControllerBelief belief, PdGains gains, bool predictHalfSample = true, IEnumerable<double>? integralGains = null)
     {
         ArgumentNullException.ThrowIfNull(belief);
         ArgumentNullException.ThrowIfNull(gains);
@@ -63,6 +68,11 @@ public sealed class ComputedTorque : IController, ILinearisableController
         _n = belief.DegreesOfFreedom;
         _kp = [.. gains.Kp];
         _kd = [.. gains.Kd];
+        _ki = integralGains is null ? new double[_n] : [.. GainCheck.Copy(integralGains, nameof(integralGains))];
+        GainCheck.SameLength(_n, _ki.Length, nameof(integralGains));
+        IntegralEnabled = integralGains is not null;
+        _integral = new double[_n];
+        _candidate = new double[_n];
         _torqueLimit = belief.TorqueLimits();
         _viscousFriction = new double[_n];
         _coulombFriction = new double[_n];
@@ -91,7 +101,27 @@ public sealed class ComputedTorque : IController, ILinearisableController
         [24.0, 24.0, 24.0, 24.0]);
 
     /// <summary>The controller's model (SPEC §5.6).</summary>
-    public ControllerBelief Belief { get; }
+    public ControllerBelief Belief { get; private set; }
+
+    /// <summary>Whether CT+I is enabled. Off by default. SPEC §7.</summary>
+    public bool IntegralEnabled { get; }
+
+    /// <summary>Integral error per joint, rad·s. SPEC §7.</summary>
+    public ReadOnlySpan<double> Integral => _integral;
+
+    /// <summary>Default optional Ki, 1/s³. SPEC §7.</summary>
+    public static IReadOnlyList<double> DefaultIntegralGains { get; } = Array.AsReadOnly(new[] { 6400.0, 6400.0, 6400.0, 6400.0 });
+
+    /// <summary>PD gains tuned with DefaultIntegralGains for the CT+I robustness option: Kp=1600 1/s², Kd=80 1/s. SPEC §7.</summary>
+    public static PdGains DefaultIntegralPdGains { get; } = new(
+        [1600.0, 1600.0, 1600.0, 1600.0], [80.0, 80.0, 80.0, 80.0]);
+
+    /// <summary>Updates the payload belief at an attachment boundary without resetting the integral or sample history. SPEC §8.3.</summary>
+    public void SetPayloadBelief(double payloadKg)
+    {
+        Belief = new ControllerBelief(Belief.BaseModel, Belief.Planet, payloadKg);
+        _dynamics = new RecursiveNewtonEuler(Belief.Model);
+    }
 
     /// <summary>The gains.</summary>
     public PdGains Gains { get; }
@@ -109,6 +139,7 @@ public sealed class ComputedTorque : IController, ILinearisableController
     public void Reset()
     {
         Array.Clear(_clamped);
+        Array.Clear(_integral);
         _started = false;
         _lastTime = 0.0;
     }
@@ -117,13 +148,15 @@ public sealed class ComputedTorque : IController, ILinearisableController
     public void Compute(double t, ReadOnlySpan<double> q, ReadOnlySpan<double> qd, JointReference reference, Span<double> u)
     {
         GainCheck.CheckLengths(_n, q, qd, reference, u);
-        var dt = _started && PredictHalfSample ? t - _lastTime : 0.0;
+        var elapsed = _started ? t - _lastTime : 0.0;
+        var dt = PredictHalfSample ? elapsed : 0.0;
         _started = true;
         _lastTime = t;
 
         for (var i = 0; i < _n; i++)
         {
-            var a = reference.Acceleration[i]
+            _candidate[i] = _integral[i] + (IntegralEnabled ? (reference.Position[i] - q[i]) * elapsed : 0.0);
+            var a = _ki[i] * _candidate[i] + reference.Acceleration[i]
                 + _kd[i] * (reference.Velocity[i] - qd[i])
                 + _kp[i] * (reference.Position[i] - q[i]);
             _acceleration[i] = a;
@@ -140,10 +173,12 @@ public sealed class ComputedTorque : IController, ILinearisableController
             var limit = _torqueLimit[i];
             _clamped[i] = Math.Abs(v) > limit;
             u[i] = Math.Clamp(v, -limit, limit);
+            if (!_clamped[i]) _integral[i] = _candidate[i];
         }
     }
 
     /// <summary>
+    /// PD part only; the integral state is excluded, as for PID. SPEC §7.
     /// K = [P diag(Kp) − Ĝ | P diag(Kd) − Ĝ Ts/2 − D̂] with P = M̂(q0) + Ĝ Ts²/8 + D̂ Ts/2, where Ĝ = ∂ĝ/∂q at q0
     /// and D̂ = diag(fv + fc/ωs) of the belief, and Ts = 0 when <see cref="PredictHalfSample"/> is off.
     /// </summary>
