@@ -60,56 +60,58 @@
     <!-- 2. Eklem Açıları, Hızları ve Torkları -->
     <div class="readout-section">
         <div class="group-title">Eklem Durumları (q, qd, e, q̇, u, τ)</div>
-        <table class="readout-table">
-            <thead>
-                <tr>
-                    <th>Eklem</th>
-                    <th>q <small>(rad)</small></th>
-                    <th>qd <small>(rad)</small></th>
-                    <th>e <small>(rad)</small></th>
-                    <th>q̇ <small>(rad/s)</small></th>
-                    <th>u <small>(N·m)</small></th>
-                    <th>τ <small>(N·m)</small></th>
-                    <th>Durum</th>
-                </tr>
-            </thead>
-            <tbody>
-                @for (var i = 0; i < 4; i++)
-                {
-                    var qi = q[i];
-                    var qdi = LatestRow is LogRow row ? row.Reference[i] : qi;
-                    var ei = qdi - qi;
-                    var qdoti = qDot[i];
-                    var ui = LatestRow is LogRow rowU ? rowU.Command[i] : 0.0;
-                    var taui = LatestRow is LogRow rowT ? rowT.AppliedTorque[i] : 0.0;
-                    var clamped = LatestRow is LogRow rowC && (rowC.ClampedMask & (1 << i)) != 0;
-                    var saturated = LatestRow is LogRow rowS && (rowS.SaturatedMask & (1 << i)) != 0;
+        <div class="table-scroll">
+            <table class="readout-table">
+                <thead>
                     <tr>
-                        <td class="joint-col">E@(i + 1)</td>
-                        <td class="mono-cell">@LabFormat.Fixed(qi, 3)</td>
-                        <td class="mono-cell">@LabFormat.Fixed(qdi, 3)</td>
-                        <td class="mono-cell">@LabFormat.Fixed(ei, 4)</td>
-                        <td class="mono-cell">@LabFormat.Fixed(qdoti, 3)</td>
-                        <td class="mono-cell">@LabFormat.Fixed(ui, 2)</td>
-                        <td class="mono-cell">@LabFormat.Fixed(taui, 2)</td>
-                        <td>
-                            @if (saturated)
-                            {
-                                <span class="badge-mini badge-danger">Doyum</span>
-                            }
-                            else if (clamped)
-                            {
-                                <span class="badge-mini badge-warning">Kırpıldı</span>
-                            }
-                            else
-                            {
-                                <span class="badge-mini badge-ok">Normal</span>
-                            }
-                        </td>
+                        <th>Eklem</th>
+                        <th>q <small>(rad)</small></th>
+                        <th>qd <small>(rad)</small></th>
+                        <th>e <small>(rad)</small></th>
+                        <th>q̇ <small>(rad/s)</small></th>
+                        <th>u <small>(N·m)</small></th>
+                        <th>τ <small>(N·m)</small></th>
+                        <th>Durum</th>
                     </tr>
-                }
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    @for (var i = 0; i < 4; i++)
+                    {
+                        var qi = q[i];
+                        var qdi = LatestRow is LogRow row ? row.Reference[i] : qi;
+                        var ei = qdi - qi;
+                        var qdoti = qDot[i];
+                        var ui = LatestRow is LogRow rowU ? rowU.Command[i] : 0.0;
+                        var taui = LatestRow is LogRow rowT ? rowT.AppliedTorque[i] : 0.0;
+                        var clamped = LatestRow is LogRow rowC && (rowC.ClampedMask & (1 << i)) != 0;
+                        var saturated = LatestRow is LogRow rowS && (rowS.SaturatedMask & (1 << i)) != 0;
+                        <tr>
+                            <td class="joint-col">E@(i + 1)</td>
+                            <td class="mono-cell">@LabFormat.Fixed(qi, 3)</td>
+                            <td class="mono-cell">@LabFormat.Fixed(qdi, 3)</td>
+                            <td class="mono-cell">@LabFormat.Fixed(ei, 4)</td>
+                            <td class="mono-cell">@LabFormat.Fixed(qdoti, 3)</td>
+                            <td class="mono-cell">@LabFormat.Fixed(ui, 2)</td>
+                            <td class="mono-cell">@LabFormat.Fixed(taui, 2)</td>
+                            <td>
+                                @if (saturated)
+                                {
+                                    <span class="badge-mini badge-danger">Doyum</span>
+                                }
+                                else if (clamped)
+                                {
+                                    <span class="badge-mini badge-warning">Kırpıldı</span>
+                                }
+                                else
+                                {
+                                    <span class="badge-mini badge-ok">Normal</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
     </div>
 
 </section>

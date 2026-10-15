@@ -32,36 +32,38 @@
         var mDiag = State.GetBelievedInertiaDiagonalAtStart();
     }
 
-    <table class="gains-table helper-table">
-        <thead>
-            <tr>
-                <th>Eklem</th>
-                <th>M̂ii <small>(kg·m²)</small></th>
-                <th>ωn <small>(rad/s)</small></th>
-                <th>ζ <small>(-)</small></th>
-            </tr>
-        </thead>
-        <tbody>
-            @for (var i = 0; i < 4; i++)
-            {
-                var idx = i;
+    <div class="table-scroll">
+        <table class="gains-table helper-table">
+            <thead>
                 <tr>
-                    <td class="joint-col">E@(idx + 1)</td>
-                    <td class="mono-cell">@LabFormat.Fixed(mDiag[idx], 5)</td>
-                    <td>
-                        <input id="design-wn-@idx" type="text" inputmode="decimal" class="form-input gain-input"
-                               value="@LabFormat.Input(State.DesignOmegaN[idx])"
-                               @onchange="e => OnOmegaChanged(idx, e)" />
-                    </td>
-                    <td>
-                        <input id="design-zeta-@idx" type="text" inputmode="decimal" class="form-input gain-input"
-                               value="@LabFormat.Input(State.DesignZeta[idx])"
-                               @onchange="e => OnZetaChanged(idx, e)" />
-                    </td>
+                    <th>Eklem</th>
+                    <th>M̂ii <small>(kg·m²)</small></th>
+                    <th>ωn <small>(rad/s)</small></th>
+                    <th>ζ <small>(-)</small></th>
                 </tr>
-            }
-        </tbody>
-    </table>
+            </thead>
+            <tbody>
+                @for (var i = 0; i < 4; i++)
+                {
+                    var idx = i;
+                    <tr>
+                        <td class="joint-col">E@(idx + 1)</td>
+                        <td class="mono-cell">@LabFormat.Fixed(mDiag[idx], 5)</td>
+                        <td>
+                            <input id="design-wn-@idx" type="text" inputmode="decimal" class="form-input gain-input"
+                                   value="@LabFormat.Input(State.DesignOmegaN[idx])"
+                                   @onchange="e => OnOmegaChanged(idx, e)" />
+                        </td>
+                        <td>
+                            <input id="design-zeta-@idx" type="text" inputmode="decimal" class="form-input gain-input"
+                                   value="@LabFormat.Input(State.DesignZeta[idx])"
+                                   @onchange="e => OnZetaChanged(idx, e)" />
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
 </section>
 
 @code {

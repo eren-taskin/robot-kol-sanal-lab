@@ -329,46 +329,48 @@
             </div>
         }
 
-        <table class="gains-table">
-            <thead>
-                <tr>
-                    <th>Eklem</th>
-                    <th>Kp <small>(@KpUnit)</small></th>
-                    <th>Kd <small>(@KdUnit)</small></th>
-                    @if (ShowKi)
-                    {
-                        <th>Ki <small>(@KiUnit)</small></th>
-                    }
-                </tr>
-            </thead>
-            <tbody>
-                @for (var i = 0; i < 4; i++)
-                {
-                    var idx = i;
+        <div class="table-scroll">
+            <table class="gains-table">
+                <thead>
                     <tr>
-                        <td class="joint-col">E@(idx + 1)</td>
-                        <td>
-                            <input id="gain-kp-@idx" type="text" inputmode="decimal" class="form-input gain-input"
-                                   value="@LabFormat.Input(State.Kp[idx])"
-                                   @onchange="e => OnGainChanged(0, idx, e)" />
-                        </td>
-                        <td>
-                            <input id="gain-kd-@idx" type="text" inputmode="decimal" class="form-input gain-input"
-                                   value="@LabFormat.Input(State.Kd[idx])"
-                                   @onchange="e => OnGainChanged(1, idx, e)" />
-                        </td>
+                        <th>Eklem</th>
+                        <th>Kp <small>(@KpUnit)</small></th>
+                        <th>Kd <small>(@KdUnit)</small></th>
                         @if (ShowKi)
                         {
-                            <td>
-                                <input id="gain-ki-@idx" type="text" inputmode="decimal" class="form-input gain-input"
-                                       value="@LabFormat.Input(State.Ki[idx])"
-                                       @onchange="e => OnGainChanged(2, idx, e)" />
-                            </td>
+                            <th>Ki <small>(@KiUnit)</small></th>
                         }
                     </tr>
-                }
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    @for (var i = 0; i < 4; i++)
+                    {
+                        var idx = i;
+                        <tr>
+                            <td class="joint-col">E@(idx + 1)</td>
+                            <td>
+                                <input id="gain-kp-@idx" type="text" inputmode="decimal" class="form-input gain-input"
+                                       value="@LabFormat.Input(State.Kp[idx])"
+                                       @onchange="e => OnGainChanged(0, idx, e)" />
+                            </td>
+                            <td>
+                                <input id="gain-kd-@idx" type="text" inputmode="decimal" class="form-input gain-input"
+                                       value="@LabFormat.Input(State.Kd[idx])"
+                                       @onchange="e => OnGainChanged(1, idx, e)" />
+                            </td>
+                            @if (ShowKi)
+                            {
+                                <td>
+                                    <input id="gain-ki-@idx" type="text" inputmode="decimal" class="form-input gain-input"
+                                           value="@LabFormat.Input(State.Ki[idx])"
+                                           @onchange="e => OnGainChanged(2, idx, e)" />
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
         @RenderError("Gains")
     </div>
 
