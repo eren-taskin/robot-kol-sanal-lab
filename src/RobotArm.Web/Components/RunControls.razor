@@ -22,6 +22,13 @@
                     @onclick="OnReset">
                 ↺ Sıfırla
             </button>
+            @if (FastMode && IsRunning)
+            {
+                <button id="btn-cancel" type="button" class="btn-run btn-cancel-run"
+                        @onclick="OnCancel">
+                    ✕ İptal
+                </button>
+            }
         </div>
 
         <div class="mode-toggle" role="group" aria-label="Çalıştırma Modu">
@@ -50,6 +57,12 @@
                 <span class="stat-label">Durum</span>
                 <strong id="run-status-readout" class="@StatusCssClass">@StatusText</strong>
             </div>
+            <label class="perf-toggle-label">
+                <input id="perf-overlay-toggle" type="checkbox"
+                       checked="@ShowPerfOverlay"
+                       @onchange="e => OnShowPerfOverlayChanged.InvokeAsync(e.Value is bool b && b)" />
+                <span>Performans</span>
+            </label>
         </div>
     </div>
 
@@ -57,6 +70,35 @@
         <div class="progress-fill @(Result is { Fault: not null } ? "fill-danger" : Result is { Success: false } ? "fill-warning" : "fill-accent")"
              style="width: @(ProgressPercent.ToString("F1", CultureInfo.InvariantCulture))%"></div>
     </div>
+
+    @if (ShowPerfOverlay && Perf is not null)
+    {
+        <div id="perf-overlay" class="perf-overlay">
+            <div class="perf-overlay-title">Performans (Son 1 sn Ortalaması)</div>
+            <div class="perf-overlay-grid">
+                <div class="perf-cell">
+                    <span class="perf-label">AdvanceBy / kare</span>
+                    <strong id="perf-advance-ms">@LabFormat.Fixed(Perf.AdvanceByMsPerFrame, 2) ms</strong>
+                </div>
+                <div class="perf-cell">
+                    <span class="perf-label">Çizim (Render) / kare</span>
+                    <strong id="perf-render-ms">@LabFormat.Fixed(Perf.RenderMsPerFrame, 2) ms</strong>
+                </div>
+                <div class="perf-cell">
+                    <span class="perf-label">İlerleyen Simülasyon / kare</span>
+                    <strong id="perf-sim-sec">@LabFormat.Fixed(Perf.SimSecondsPerFrame, 4) s</strong>
+                </div>
+                <div class="perf-cell">
+                    <span class="perf-label">Gerçek Zaman Çarpanı</span>
+                    <strong id="perf-rtf">@LabFormat.Fixed(Perf.RealTimeFactor, 2)×</strong>
+                </div>
+                <div class="perf-cell">
+                    <span class="perf-label">Son Kararlılık Hesabı</span>
+                    <strong id="perf-stability-ms">@LabFormat.Fixed(Perf.LastStabilityMs, 2) ms</strong>
+                </div>
+            </div>
+        </div>
+    }
 
     @if (HasValidationErrors)
     {
@@ -103,12 +145,16 @@
     [Parameter] public double RealTimeFactor { get; set; }
     [Parameter] public double FastComputeWallMs { get; set; }
     [Parameter] public RunResult? Result { get; set; }
+    [Parameter] public bool ShowPerfOverlay { get; set; }
+    [Parameter] public PerfMetrics? Perf { get; set; }
 
     [Parameter] public EventCallback OnStart { get; set; }
     [Parameter] public EventCallback OnPause { get; set; }
     [Parameter] public EventCallback OnStep { get; set; }
     [Parameter] public EventCallback OnReset { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
     [Parameter] public EventCallback<bool> OnFastModeChanged { get; set; }
+    [Parameter] public EventCallback<bool> OnShowPerfOverlayChanged { get; set; }
 
     private double ProgressPercent => Duration > 0
         ? Math.Clamp(100.0 * SimulatedTime / Duration, 0.0, 100.0)
@@ -125,7 +171,7 @@
             if (Result?.Fault is not null) return "Fiziksel Hata (Durdu)";
             if (IsFinished && Result is { Success: true }) return "Tamamlandı (Başarılı)";
             if (IsFinished && Result is { Success: false }) return "Tamamlandı (Başarısız)";
-            if (IsRunning) return FastMode ? "Hızlı Oynatılıyor" : "Çalışıyor";
+            if (IsRunning) return FastMode ? $"Hızlı Hesaplanıyor (%{LabFormat.Fixed(ProgressPercent, 0)})" : "Çalışıyor";
             if (IsPaused) return "Duraklatıldı";
             return "Hazır";
         }

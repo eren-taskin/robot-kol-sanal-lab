@@ -19,3 +19,9 @@ jobs:
 
       - name: Test
         run: dotnet test RobotArm.sln --configuration Release --no-build --filter "Category!=Report"
+
+      # D10: Release publish uses WebAssembly AOT; build and test above do not need it.
+      - name: Publish Web (AOT)
+        run: |
+          dotnet workload install wasm-tools
+          dotnet publish src/RobotArm.Web --configuration Release

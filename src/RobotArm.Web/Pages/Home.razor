@@ -8,10 +8,12 @@
     <!-- Left Column: Setup Panel & Design Helper -->
     <div class="col-setup">
         <SetupPanel State="_state"
+                    IsRunning="_isRunning"
                     OnScenarioSelected="HandleScenarioChanged"
                     OnStateChanged="HandleSetupEdited" />
 
         <DesignHelper State="_state"
+                      IsRunning="_isRunning"
                       OnGainsApplied="HandleSetupEdited" />
     </div>
 
@@ -27,21 +29,27 @@
                      RealTimeFactor="_realTimeFactor"
                      FastComputeWallMs="_fastComputeWallMs"
                      Result="_result"
+                     ShowPerfOverlay="_showPerfOverlay"
+                     Perf="CurrentPerfMetrics"
                      OnStart="StartRunAsync"
                      OnPause="PauseRun"
                      OnStep="StepRun"
                      OnReset="ResetRun"
-                     OnFastModeChanged="SetFastMode" />
+                     OnCancel="CancelFastRun"
+                     OnFastModeChanged="SetFastMode"
+                     OnShowPerfOverlayChanged="SetShowPerfOverlay" />
 
         <ArmView State="_state"
                  Snapshot="_snapshot" />
 
-        <StabilityPanel Analysis="_state.Stability" />
+        <StabilityPanel Analysis="_state.Stability"
+                        IsRunning="_isRunning" />
     </div>
 
     <!-- Right Column: Live Readout -->
     <div class="col-readout">
         <LiveReadout State="_state"
+                     IsRunning="_isRunning"
                      Snapshot="_snapshot"
                      LatestRow="_latestRow"
                      Result="_result" />
@@ -49,27 +57,104 @@
 </div>
 
 @code {
+    private readonly record struct FramePerfSample(
+        long TimestampTicks,
+        double WallElapsedSeconds,
+        double AdvanceByMs,
+        double RenderMs,
+        double SimSecondsAdvanced);
+
     private readonly LabState _state = new();
     private readonly ExperimentRunner _runner = new();
+    private readonly Queue<FramePerfSample> _perfWindow = new();
 
     private CancellationTokenSource? _loopCts;
+    private CancellationTokenSource? _stabilityDebounceCts;
     private bool _runnerStarted;
     private bool _isRunning;
     private bool _isPaused;
     private bool _isFinished;
     private bool _fastMode;
+    private bool _showPerfOverlay;
 
     private ExperimentSnapshot? _snapshot;
     private LogRow? _latestRow;
     private RunResult? _result;
-    private IReadOnlyList<LogRow>? _precomputedLog;
-    private int _playbackIndex;
     private double _realTimeFactor;
     private double _fastComputeWallMs;
+
+    private bool _measuringFrameRender;
+    private long _renderStartTimestamp;
+    private long _pendingFrameTimestamp;
+    private double _pendingWallElapsed;
+    private double _pendingAdvMs;
+    private double _pendingSimDelta;
+
+    private double _avgAdvanceByMs;
+    private double _avgRenderMs;
+    private double _avgSimSeconds;
+    private double _avgRtf;
+
+    private PerfMetrics CurrentPerfMetrics => new(
+        _avgAdvanceByMs,
+        _avgRenderMs,
+        _avgSimSeconds,
+        _avgRtf,
+        _state.LastStabilityRecomputeMs);
+
+    private void SetShowPerfOverlay(bool show)
+    {
+        _showPerfOverlay = show;
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (_measuringFrameRender)
+        {
+            var renderMs = Stopwatch.GetElapsedTime(_renderStartTimestamp).TotalMilliseconds;
+            _measuringFrameRender = false;
+            RecordFrameSample(_pendingFrameTimestamp, _pendingWallElapsed, _pendingAdvMs, renderMs, _pendingSimDelta);
+        }
+    }
+
+    private void RecordFrameSample(long timestamp, double wallElapsed, double advMs, double renderMs, double simDelta)
+    {
+        while (_perfWindow.Count > 0 && Stopwatch.GetElapsedTime(_perfWindow.Peek().TimestampTicks, timestamp).TotalSeconds > 1.0)
+        {
+            _perfWindow.Dequeue();
+        }
+        _perfWindow.Enqueue(new FramePerfSample(timestamp, wallElapsed, advMs, renderMs, simDelta));
+
+        double sumAdv = 0, sumRender = 0, sumSim = 0, sumWall = 0;
+        foreach (var s in _perfWindow)
+        {
+            sumAdv += s.AdvanceByMs;
+            sumRender += s.RenderMs;
+            sumSim += s.SimSecondsAdvanced;
+            sumWall += s.WallElapsedSeconds;
+        }
+        var count = _perfWindow.Count;
+        _avgAdvanceByMs = sumAdv / count;
+        _avgRenderMs = sumRender / count;
+        _avgSimSeconds = sumSim / count;
+        _avgRtf = sumWall > 1e-4 ? sumSim / sumWall : 0.0;
+        _realTimeFactor = _avgRtf;
+    }
+
+    private void BeginFrameRenderMeasurement(long frameTimestamp, double wallElapsed, double advMs, double simDelta)
+    {
+        _pendingFrameTimestamp = frameTimestamp;
+        _pendingWallElapsed = wallElapsed;
+        _pendingAdvMs = advMs;
+        _pendingSimDelta = simDelta;
+        _measuringFrameRender = true;
+        _renderStartTimestamp = Stopwatch.GetTimestamp();
+    }
 
     private void HandleScenarioChanged()
     {
         ResetRun();
+        ScheduleStabilityRecompute();
     }
 
     private void HandleSetupEdited()
@@ -78,7 +163,43 @@
         {
             ResetRun();
         }
+        ScheduleStabilityRecompute();
         StateHasChanged();
+    }
+
+    private void ScheduleStabilityRecompute()
+    {
+        CancelStabilityDebounce();
+        if (_isRunning)
+        {
+            return;
+        }
+        if (_state.TryApplyCachedStability())
+        {
+            return;
+        }
+
+        _stabilityDebounceCts = new CancellationTokenSource();
+        var token = _stabilityDebounceCts.Token;
+        _ = RunDebouncedStabilityAsync(token);
+    }
+
+    private async Task RunDebouncedStabilityAsync(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(300, token);
+            if (token.IsCancellationRequested || _isRunning)
+            {
+                return;
+            }
+            _state.RecomputeStability();
+            StateHasChanged();
+        }
+        catch (TaskCanceledException)
+        {
+            // Input changed again or run started before 300 ms elapsed
+        }
     }
 
     private void SetFastMode(bool fast)
@@ -90,9 +211,10 @@
 
     private async Task StartRunAsync()
     {
-        _state.RecomputeValidationAndStability();
+        _state.RecomputeValidation();
         if (_state.ValidationErrors.Count > 0) return;
 
+        CancelStabilityDebounce();
         CancelLoop();
 
         if (_fastMode)
@@ -108,6 +230,7 @@
             _runnerStarted = true;
             _isFinished = _runner.IsFinished;
             _result = _runner.Result;
+            _perfWindow.Clear();
             SyncFromRunner();
             if (_isFinished)
             {
@@ -122,28 +245,26 @@
         _loopCts = new CancellationTokenSource();
         var token = _loopCts.Token;
 
-        // PROJECT.md §2 rule 4: each animation frame advances simulated time by a fixed slice (16 ms) and redraws.
-        const double frameSimSlice = 0.016;
         var lastWallTimestamp = Stopwatch.GetTimestamp();
 
         try
         {
+            await Task.Delay(16, token);
+
             while (!token.IsCancellationRequested && !_runner.IsFinished)
             {
-                await Task.Delay(16, token);
-                var now = Stopwatch.GetTimestamp();
-                var wallElapsed = Stopwatch.GetElapsedTime(lastWallTimestamp, now).TotalSeconds;
-                lastWallTimestamp = now;
+                var frameStart = Stopwatch.GetTimestamp();
+                var wallElapsed = Stopwatch.GetElapsedTime(lastWallTimestamp, frameStart).TotalSeconds;
+                lastWallTimestamp = frameStart;
+
+                // Advance by elapsed real time, capped at 50 ms of simulated time per frame.
+                var targetSimSlice = Math.Clamp(wallElapsed, _state.StepSeconds, 0.050);
 
                 var prevSimTime = _runner.Current.Time;
-                _runner.AdvanceBy(frameSimSlice);
+                var advStart = Stopwatch.GetTimestamp();
+                _runner.AdvanceBy(targetSimSlice);
+                var advMs = Stopwatch.GetElapsedTime(advStart).TotalMilliseconds;
                 var simDelta = _runner.Current.Time - prevSimTime;
-
-                if (wallElapsed > 1e-4 && simDelta > 0)
-                {
-                    var instantRtf = simDelta / wallElapsed;
-                    _realTimeFactor = _realTimeFactor <= 0 ? instantRtf : 0.8 * _realTimeFactor + 0.2 * instantRtf;
-                }
 
                 SyncFromRunner();
 
@@ -153,11 +274,19 @@
                     _isRunning = false;
                     _isPaused = false;
                     _result = _runner.Result;
+                    BeginFrameRenderMeasurement(frameStart, wallElapsed, advMs, simDelta);
+                    StateHasChanged();
+                    await Task.Yield();
                     StateHasChanged();
                     break;
                 }
 
+                BeginFrameRenderMeasurement(frameStart, wallElapsed, advMs, simDelta);
                 StateHasChanged();
+
+                var frameWorkMs = Stopwatch.GetElapsedTime(frameStart).TotalMilliseconds;
+                var delayMs = Math.Max(1, 16 - (int)Math.Round(frameWorkMs));
+                await Task.Delay(delayMs, token);
             }
         }
         catch (TaskCanceledException)
@@ -168,7 +297,8 @@
 
     private async Task RunFastModeAsync()
     {
-        // PROJECT.md §2 rule 4 & T09 item 3: "hızlı" mode computes the whole scenario first (without blocking the UI) and then plays it back.
+        const double fastChunkSimSeconds = 0.25;
+
         _isRunning = true;
         _isPaused = false;
         _loopCts = new CancellationTokenSource();
@@ -176,87 +306,76 @@
 
         try
         {
-            if (_precomputedLog is null || _isFinished)
+            if (!_runnerStarted || _isFinished)
             {
                 var scenario = _state.BuildScenario();
-                var sw = Stopwatch.StartNew();
                 _runner.Start(scenario);
-                while (!_runner.IsFinished && !token.IsCancellationRequested)
-                {
-                    _runner.AdvanceBy(1.0);
-                    await Task.Delay(1, token);
-                }
-                sw.Stop();
-                if (token.IsCancellationRequested) return;
-
-                var res = _runner.Result!;
-                _fastComputeWallMs = Math.Max(0.1, sw.Elapsed.TotalMilliseconds);
-                var totalSim = Math.Max(res.Final.Time, scenario.Step);
-                _realTimeFactor = totalSim / Math.Max(1e-5, sw.Elapsed.TotalSeconds);
-
-                _result = res;
-                _precomputedLog = res.Log;
-                _playbackIndex = 0;
                 _runnerStarted = true;
                 _isFinished = false;
-
-                if (_precomputedLog.Count == 0)
-                {
-                    _snapshot = res.Final;
-                    _latestRow = null;
-                    _isFinished = true;
-                    _isRunning = false;
-                    StateHasChanged();
-                    return;
-                }
+                _result = null;
+                _perfWindow.Clear();
+                SyncFromRunner();
             }
 
-            // Play back the precomputed log in ~25 frames
-            var stepStride = Math.Max(1, _precomputedLog.Count / 25);
+            var sw = Stopwatch.StartNew();
+            var lastWallTimestamp = Stopwatch.GetTimestamp();
 
-            while (!token.IsCancellationRequested && _precomputedLog is not null)
+            while (!_runner.IsFinished && !token.IsCancellationRequested)
             {
-                ApplyPrecomputedSample(_playbackIndex);
-                StateHasChanged();
+                var chunkStart = Stopwatch.GetTimestamp();
+                var prevSimTime = _runner.Current.Time;
+                var advStart = Stopwatch.GetTimestamp();
+                _runner.AdvanceBy(fastChunkSimSeconds);
+                var advMs = Stopwatch.GetElapsedTime(advStart).TotalMilliseconds;
+                var simDelta = _runner.Current.Time - prevSimTime;
 
-                await Task.Delay(16, token);
+                SyncFromRunner();
 
-                if (_playbackIndex >= _precomputedLog.Count - 1)
+                var now = Stopwatch.GetTimestamp();
+                var wallElapsed = Stopwatch.GetElapsedTime(lastWallTimestamp, now).TotalSeconds;
+                lastWallTimestamp = now;
+
+                if (_runner.IsFinished)
                 {
-                    _snapshot = _result!.Final;
-                    _latestRow = _precomputedLog[^1];
-                    _isFinished = true;
-                    _isRunning = false;
-                    _isPaused = false;
-                    StateHasChanged();
+                    BeginFrameRenderMeasurement(chunkStart, wallElapsed, advMs, simDelta);
                     break;
                 }
 
-                _playbackIndex = Math.Min(_precomputedLog.Count - 1, _playbackIndex + stepStride);
+                BeginFrameRenderMeasurement(chunkStart, wallElapsed, advMs, simDelta);
+                StateHasChanged();
+                await Task.Delay(1, token);
             }
+
+            sw.Stop();
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            var res = _runner.Result!;
+            _fastComputeWallMs = Math.Max(0.1, sw.Elapsed.TotalMilliseconds);
+            var totalSim = Math.Max(res.Final.Time, _state.StepSeconds);
+            _realTimeFactor = totalSim / Math.Max(1e-5, sw.Elapsed.TotalSeconds);
+
+            _result = res;
+            _snapshot = res.Final;
+            _latestRow = res.Log.Count > 0 ? res.Log[^1] : null;
+            _isFinished = true;
+            _isRunning = false;
+            _isPaused = false;
+            StateHasChanged();
+            await Task.Yield();
+            StateHasChanged();
         }
         catch (TaskCanceledException)
         {
-            // Paused or reset during fast computation/playback
+            // Cancelled, paused, or reset during chunked computation
         }
     }
 
-    private void ApplyPrecomputedSample(int index)
+    private void CancelFastRun()
     {
-        if (_precomputedLog is null || _precomputedLog.Count == 0) return;
-        var clampedIdx = Math.Clamp(index, 0, _precomputedLog.Count - 1);
-        var row = _precomputedLog[clampedIdx];
-        _latestRow = row;
-        _snapshot = new ExperimentSnapshot(
-            row.Time,
-            row.Q,
-            row.QDot,
-            row.Tool,
-            row.PayloadAttached,
-            row.PayloadKg,
-            row.ObjectPosition,
-            row.Phase,
-            clampedIdx + 1);
+        ResetRun();
     }
 
     private void PauseRun()
@@ -269,46 +388,12 @@
 
     private void StepRun()
     {
-        _state.RecomputeValidationAndStability();
+        _state.RecomputeValidation();
         if (_state.ValidationErrors.Count > 0) return;
 
+        CancelStabilityDebounce();
         CancelLoop();
         _isRunning = false;
-
-        if (_fastMode)
-        {
-            if (_precomputedLog is null)
-            {
-                var scenario = _state.BuildScenario();
-                var sw = Stopwatch.StartNew();
-                var res = _runner.Run(scenario);
-                sw.Stop();
-                _fastComputeWallMs = Math.Max(0.1, sw.Elapsed.TotalMilliseconds);
-                _realTimeFactor = Math.Max(res.Final.Time, scenario.Step) / Math.Max(1e-5, sw.Elapsed.TotalSeconds);
-                _result = res;
-                _precomputedLog = res.Log;
-                _playbackIndex = 0;
-                _runnerStarted = true;
-            }
-            else if (_playbackIndex < _precomputedLog.Count - 1)
-            {
-                _playbackIndex++;
-            }
-
-            if (_precomputedLog.Count == 0 || _playbackIndex >= _precomputedLog.Count - 1)
-            {
-                _snapshot = _result!.Final;
-                _latestRow = _precomputedLog.Count > 0 ? _precomputedLog[^1] : null;
-                _isFinished = true;
-                _isPaused = false;
-            }
-            else
-            {
-                ApplyPrecomputedSample(_playbackIndex);
-                _isPaused = true;
-            }
-            return;
-        }
 
         if (!_runnerStarted || _isFinished)
         {
@@ -337,8 +422,6 @@
         _snapshot = null;
         _latestRow = null;
         _result = null;
-        _precomputedLog = null;
-        _playbackIndex = 0;
         _realTimeFactor = 0;
         _fastComputeWallMs = 0;
     }
@@ -359,8 +442,19 @@
         }
     }
 
+    private void CancelStabilityDebounce()
+    {
+        if (_stabilityDebounceCts is not null)
+        {
+            _stabilityDebounceCts.Cancel();
+            _stabilityDebounceCts.Dispose();
+            _stabilityDebounceCts = null;
+        }
+    }
+
     public void Dispose()
     {
         CancelLoop();
+        CancelStabilityDebounce();
     }
 }

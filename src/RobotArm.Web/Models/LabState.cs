@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using RobotArm.Core.Control;
 using RobotArm.Core.Dynamics;
@@ -8,6 +9,16 @@ using RobotArm.Core.Tasks;
 using Sim = RobotArm.Core.Simulation.Simulation;
 
 namespace RobotArm.Web.Models;
+
+/// <summary>
+/// Rolling 1-second performance metrics for the Performans overlay.
+/// </summary>
+public sealed record PerfMetrics(
+    double AdvanceByMsPerFrame,
+    double RenderMsPerFrame,
+    double SimSecondsPerFrame,
+    double RealTimeFactor,
+    double LastStabilityMs);
 
 /// <summary>
 /// Stability and torque-budget analysis at the scenario's start pose.
@@ -85,12 +96,31 @@ public sealed class LabState
     public double[] DesignOmegaN { get; } = [12.0, 12.0, 12.0, 12.0];
     public double[] DesignZeta { get; } = [1.0, 1.0, 1.0, 1.0];
 
+    private readonly record struct StabilityCoreEntry(
+        double MaxStableStepSeconds,
+        double MaxStableSamplePeriodSeconds,
+        LinearSystem System,
+        ILinearisableController Controller,
+        double[] GravityTorqueNm,
+        double[] StallTorqueNm,
+        double[] TorqueUsagePercent,
+        bool TorqueBudgetWarning);
+
+    private static readonly ArmModel _baseModel = ArmModel.OpenManipulatorX();
+    private readonly Dictionary<string, StabilityAnalysis> _stabilityCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, StabilityCoreEntry> _stabilityCoreCache = new(StringComparer.Ordinal);
+    private string _currentStabilityKey = "";
+    private string _cachedInertiaKey = "";
+    private double[] _cachedInertiaDiag = [0.00247, 0.01433, 0.00490, 0.00037];
+
     public Dictionary<string, string> ValidationErrors { get; } = new(StringComparer.Ordinal);
     public StabilityAnalysis Stability { get; private set; } = DefaultStability();
+    public double LastStabilityRecomputeMs { get; private set; }
+    public bool IsStabilityCurrent => string.Equals(_currentStabilityKey, GetFullStabilityKey(), StringComparison.Ordinal);
 
     public LabState()
     {
-        LoadScenario(ScenarioLibrary.All[0]);
+        LoadScenario(ScenarioLibrary.All[0], recomputeStabilityNow: true);
     }
 
     public string ControllerKey =>
@@ -121,7 +151,7 @@ public sealed class LabState
         {
             ApplyDefaultGains();
         }
-        RecomputeValidationAndStability();
+        RecomputeValidation();
     }
 
     public void ApplyDefaultGains()
@@ -162,7 +192,7 @@ public sealed class LabState
         }
     }
 
-    public void LoadScenario(Scenario s)
+    public void LoadScenario(Scenario s, bool recomputeStabilityNow = false)
     {
         SelectedLibraryName = s.Name;
         Name = s.Name;
@@ -214,7 +244,11 @@ public sealed class LabState
         Seed = s.Seed;
         DurationSeconds = s.Duration;
 
-        RecomputeValidationAndStability();
+        RecomputeValidation();
+        if (recomputeStabilityNow)
+        {
+            RecomputeStability();
+        }
     }
 
     public Scenario BuildScenario()
@@ -276,11 +310,18 @@ public sealed class LabState
     }
 
     /// <summary>
-    /// Computes the diagonal entries M̂ii (kg·m²) of the controller belief's inertia matrix at the start pose.
-    /// Used by the Design Helper (SPEC §5.2, §7).
+    /// Computes (and caches per belief/pose input set) the diagonal entries M̂ii (kg·m²)
+    /// of the controller belief's inertia matrix at the start pose.
     /// </summary>
     public double[] GetBelievedInertiaDiagonalAtStart()
     {
+        var key = FormattableString.Invariant(
+            $"{StartQ[0]:R}|{StartQ[1]:R}|{StartQ[2]:R}|{StartQ[3]:R}|{TaskKind == TaskKind.PickPlace}|{PayloadKg:R}|{UseBeliefPayloadOverride}|{BeliefPayloadKg:R}|{BeliefMassScale:R}");
+        if (string.Equals(_cachedInertiaKey, key, StringComparison.Ordinal))
+        {
+            return _cachedInertiaDiag;
+        }
+
         var diag = new double[4];
         try
         {
@@ -294,14 +335,16 @@ public sealed class LabState
         }
         catch
         {
-            var fallback = ArmModel.OpenManipulatorX();
             var m = new double[16];
-            new RecursiveNewtonEuler(fallback).InertiaMatrix(new double[4], m);
+            new RecursiveNewtonEuler(_baseModel).InertiaMatrix(new double[4], m);
             for (var i = 0; i < 4; i++)
             {
                 diag[i] = m[i * 4 + i];
             }
         }
+
+        _cachedInertiaKey = key;
+        _cachedInertiaDiag = diag;
         return diag;
     }
 
@@ -327,13 +370,13 @@ public sealed class LabState
                 Kd[i] = Math.Round(2.0 * zeta * wn * mDiag[i], 4);
             }
         }
-        RecomputeValidationAndStability();
+        RecomputeValidation();
     }
 
-    public void RecomputeValidationAndStability()
+    public void RecomputeValidation()
     {
         ValidationErrors.Clear();
-        var model = ArmModel.OpenManipulatorX();
+        var model = _baseModel;
 
         if (PlanetKey == Planet.CustomKey && (!double.IsFinite(CustomGravity) || CustomGravity < 0 || CustomGravity > Planet.MaxCustomG))
         {
@@ -518,11 +561,55 @@ public sealed class LabState
                 ValidationErrors["General"] = TranslateCoreException(ex);
             }
         }
-
-        Stability = ComputeStability(model);
     }
 
-    private StabilityAnalysis ComputeStability(ArmModel baseModel)
+    public bool TryApplyCachedStability()
+    {
+        var fullKey = GetFullStabilityKey();
+        if (string.Equals(_currentStabilityKey, fullKey, StringComparison.Ordinal))
+        {
+            return true;
+        }
+        if (_stabilityCache.TryGetValue(fullKey, out var cached))
+        {
+            Stability = cached;
+            _currentStabilityKey = fullKey;
+            LastStabilityRecomputeMs = 0.0;
+            return true;
+        }
+        return false;
+    }
+
+    public void RecomputeStability()
+    {
+        var fullKey = GetFullStabilityKey();
+        if (string.Equals(_currentStabilityKey, fullKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+        if (_stabilityCache.TryGetValue(fullKey, out var cached))
+        {
+            Stability = cached;
+            _currentStabilityKey = fullKey;
+            LastStabilityRecomputeMs = 0.0;
+            return;
+        }
+
+        var sw = Stopwatch.GetTimestamp();
+        var computed = ComputeStabilityWithCoreCache(_baseModel);
+        LastStabilityRecomputeMs = Stopwatch.GetElapsedTime(sw).TotalMilliseconds;
+        Stability = computed;
+        _currentStabilityKey = fullKey;
+        _stabilityCache[fullKey] = computed;
+    }
+
+    private string GetCoreStabilityKey() => FormattableString.Invariant(
+        $"{PlanetKey}|{(PlanetKey == Planet.CustomKey ? CustomGravity : 0.0):R}|{TaskKind == TaskKind.PickPlace}|{PayloadKg:R}|{StartQ[0]:R}|{StartQ[1]:R}|{StartQ[2]:R}|{StartQ[3]:R}|{ControlMethod}|{IntegralEnabled}|{PredictHalfSample}|{Kp[0]:R}|{Kp[1]:R}|{Kp[2]:R}|{Kp[3]:R}|{Kd[0]:R}|{Kd[1]:R}|{Kd[2]:R}|{Kd[3]:R}|{UseBeliefPayloadOverride}|{BeliefPayloadKg:R}|{UseBeliefGravityOverride}|{BeliefGravity:R}|{BeliefMassScale:R}");
+
+    private string GetFullStabilityKey() => FormattableString.Invariant(
+        $"{GetCoreStabilityKey()}|{StepSeconds:R}|{SamplePeriodSeconds:R}");
+
+    private StabilityAnalysis ComputeStabilityWithCoreCache(ArmModel baseModel)
     {
         try
         {
@@ -534,73 +621,95 @@ public sealed class LabState
                 }
             }
 
-            var truePlanet = ResolveTruePlanetSafe();
-            var initialPlantPayload = TaskKind == TaskKind.PickPlace ? 0.0 : Math.Clamp(PayloadKg, 0.0, 0.5);
-            var startPlantModel = baseModel.WithPayload(initialPlantPayload);
-
-            // 1. RK4 step-size limit at the start pose
-            var maxStableStep = StabilityEstimate.MaxStableStep(startPlantModel, StartQ);
-            var stepWarning = double.IsFinite(StepSeconds) && StepSeconds > maxStableStep;
-
-            // 2. Sampled closed-loop stability at the start pose
-            var system = LinearSystem.ArmAtRest(baseModel, truePlanet, initialPlantPayload, StartQ);
-            var belief = BuildControllerBeliefSafe();
-            var safeKp = Kp.Select(v => double.IsFinite(v) && v >= 0 ? v : 0.0).ToArray();
-            var safeKd = Kd.Select(v => double.IsFinite(v) && v >= 0 ? v : 0.0).ToArray();
-            var safeKi = Ki.Select(v => double.IsFinite(v) && v >= 0 ? v : 0.0).ToArray();
-
-            ILinearisableController controller = ControlMethod switch
+            var coreKey = GetCoreStabilityKey();
+            if (!_stabilityCoreCache.TryGetValue(coreKey, out var core))
             {
-                ControlMethod.PID => new Pid(belief, new PidGains(safeKp, safeKi, safeKd)),
-                ControlMethod.PDG => new PdGravity(belief, new PdGains(safeKp, safeKd)),
-                _ => new ComputedTorque(belief, new PdGains(safeKp, safeKd), PredictHalfSample,
-                    IntegralEnabled ? safeKi : null)
-            };
+                var truePlanet = ResolveTruePlanetSafe();
+                var initialPlantPayload = TaskKind == TaskKind.PickPlace ? 0.0 : Math.Clamp(PayloadKg, 0.0, 0.5);
+                var startPlantModel = baseModel.WithPayload(initialPlantPayload);
 
+                // 1. RK4 step-size limit at the start pose
+                var maxStableStep = StabilityEstimate.MaxStableStep(startPlantModel, StartQ);
+
+                // 2. Sampled closed-loop stability at the start pose
+                var system = LinearSystem.ArmAtRest(baseModel, truePlanet, initialPlantPayload, StartQ);
+                var belief = BuildControllerBeliefSafe();
+                var safeKp = new double[4];
+                var safeKd = new double[4];
+                var safeKi = new double[4];
+                for (var i = 0; i < 4; i++)
+                {
+                    safeKp[i] = double.IsFinite(Kp[i]) && Kp[i] >= 0 ? Kp[i] : 0.0;
+                    safeKd[i] = double.IsFinite(Kd[i]) && Kd[i] >= 0 ? Kd[i] : 0.0;
+                    safeKi[i] = double.IsFinite(Ki[i]) && Ki[i] >= 0 ? Ki[i] : 0.0;
+                }
+
+                ILinearisableController controller = ControlMethod switch
+                {
+                    ControlMethod.PID => new Pid(belief, new PidGains(safeKp, safeKi, safeKd)),
+                    ControlMethod.PDG => new PdGravity(belief, new PdGains(safeKp, safeKd)),
+                    _ => new ComputedTorque(belief, new PdGains(safeKp, safeKd), PredictHalfSample,
+                        IntegralEnabled ? safeKi : null)
+                };
+
+                var maxStableTs = SampledLoopStability.MaxStableSamplePeriod(system, controller, StartQ);
+
+                // 3. Torque budget at the start pose
+                var budgetPayload = Math.Clamp(double.IsFinite(PayloadKg) ? PayloadKg : 0.0, 0.0, 0.5);
+                var budgetModel = baseModel.WithPayload(budgetPayload);
+                var rnea = new RecursiveNewtonEuler(budgetModel);
+                var zeros = new double[4];
+                var gTorque = new double[4];
+                rnea.BiasTorque(StartQ, zeros, truePlanet, gTorque);
+
+                var stall = new double[4];
+                var usage = new double[4];
+                var torqueWarning = false;
+                for (var i = 0; i < 4; i++)
+                {
+                    stall[i] = budgetModel.Actuators[i].StallTorque;
+                    usage[i] = 100.0 * Math.Abs(gTorque[i]) / stall[i];
+                    if (usage[i] > 80.0)
+                    {
+                        torqueWarning = true;
+                    }
+                }
+
+                core = new StabilityCoreEntry(
+                    maxStableStep,
+                    maxStableTs,
+                    system,
+                    controller,
+                    gTorque,
+                    stall,
+                    usage,
+                    torqueWarning);
+                _stabilityCoreCache[coreKey] = core;
+            }
+
+            var stepWarning = double.IsFinite(StepSeconds) && StepSeconds > core.MaxStableStepSeconds;
             var tsForEval = double.IsFinite(SamplePeriodSeconds) && SamplePeriodSeconds > 0
                 ? SamplePeriodSeconds
                 : ControlLoop.DefaultSamplePeriod;
-            var rho = SampledLoopStability.SpectralRadius(system, controller, StartQ, tsForEval);
-            var maxStableTs = SampledLoopStability.MaxStableSamplePeriod(system, controller, StartQ);
+            var rho = SampledLoopStability.SpectralRadius(core.System, core.Controller, StartQ, tsForEval);
             var sampledLoopUnstable = !double.IsFinite(rho) || rho >= 1.0;
             var excludesIntegral = ControlMethod == ControlMethod.PID || (ControlMethod == ControlMethod.CT && IntegralEnabled);
-
-            // 3. Torque budget at the start pose (using scenario payload so heavy payload warnings show immediately)
-            var budgetPayload = Math.Clamp(double.IsFinite(PayloadKg) ? PayloadKg : 0.0, 0.0, 0.5);
-            var budgetModel = baseModel.WithPayload(budgetPayload);
-            var rnea = new RecursiveNewtonEuler(budgetModel);
-            var zeros = new double[4];
-            var gTorque = new double[4];
-            rnea.BiasTorque(StartQ, zeros, truePlanet, gTorque);
-
-            var stall = new double[4];
-            var usage = new double[4];
-            var torqueWarning = false;
-            for (var i = 0; i < 4; i++)
-            {
-                stall[i] = budgetModel.Actuators[i].StallTorque;
-                usage[i] = 100.0 * Math.Abs(gTorque[i]) / stall[i];
-                if (usage[i] > 80.0)
-                {
-                    torqueWarning = true;
-                }
-            }
 
             return new StabilityAnalysis(
                 IsValid: true,
                 ErrorMessage: null,
                 StepSeconds: StepSeconds,
-                MaxStableStepSeconds: maxStableStep,
+                MaxStableStepSeconds: core.MaxStableStepSeconds,
                 StepWarning: stepWarning,
                 SamplePeriodSeconds: tsForEval,
                 SpectralRadius: rho,
-                MaxStableSamplePeriodSeconds: maxStableTs,
+                MaxStableSamplePeriodSeconds: core.MaxStableSamplePeriodSeconds,
                 SampledLoopUnstable: sampledLoopUnstable,
                 ExcludesIntegralNote: excludesIntegral,
-                GravityTorqueNm: gTorque,
-                StallTorqueNm: stall,
-                TorqueUsagePercent: usage,
-                TorqueBudgetWarning: torqueWarning);
+                GravityTorqueNm: core.GravityTorqueNm,
+                StallTorqueNm: core.StallTorqueNm,
+                TorqueUsagePercent: core.TorqueUsagePercent,
+                TorqueBudgetWarning: core.TorqueBudgetWarning);
         }
         catch (Exception ex)
         {

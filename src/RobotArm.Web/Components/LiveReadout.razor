@@ -1,4 +1,5 @@
 @namespace RobotArm.Web.Components
+@using System.Diagnostics
 
 <section class="panel-card live-readout-panel">
     <div class="panel-header">
@@ -7,8 +8,8 @@
     </div>
 
     @{
-        var q = CurrentQ;
-        var qDot = CurrentQDot;
+        var q = GetCurrentQ();
+        var qDot = GetCurrentQDot();
         var planar = ForwardKinematics.Planar(q);
         var tool = ForwardKinematics.ClosedForm(q).Position;
         var refTool = LatestRow is LogRow rRow ? rRow.ReferenceTool : tool;
@@ -154,10 +155,31 @@
 </section>
 
 @code {
+    private readonly double[] _qBuf = new double[4];
+    private readonly double[] _qDotBuf = new double[4];
+    private long _lastRenderTimestamp;
+
     [Parameter, EditorRequired] public LabState State { get; set; } = null!;
+    [Parameter] public bool IsRunning { get; set; }
     [Parameter] public ExperimentSnapshot? Snapshot { get; set; }
     [Parameter] public LogRow? LatestRow { get; set; }
     [Parameter] public RunResult? Result { get; set; }
+
+    protected override bool ShouldRender()
+    {
+        if (!IsRunning)
+        {
+            _lastRenderTimestamp = 0;
+            return true;
+        }
+        var now = Stopwatch.GetTimestamp();
+        if (_lastRenderTimestamp == 0 || Stopwatch.GetElapsedTime(_lastRenderTimestamp, now).TotalMilliseconds >= 100.0)
+        {
+            _lastRenderTimestamp = now;
+            return true;
+        }
+        return false;
+    }
 
     private double CurrentTime => Snapshot?.Time ?? 0.0;
     private int SampleCount => Snapshot?.SampleCount ?? 0;
@@ -165,13 +187,34 @@
         ? TranslatePhase(s.Phase)
         : "Hazır";
 
-    private double[] CurrentQ => Snapshot is ExperimentSnapshot s
-        ? s.Q.ToArray()
-        : State.StartQ.Select(v => double.IsFinite(v) ? v : 0.0).ToArray();
+    private double[] GetCurrentQ()
+    {
+        if (Snapshot is ExperimentSnapshot s)
+        {
+            s.Q.CopyTo(_qBuf);
+        }
+        else
+        {
+            for (var i = 0; i < 4; i++)
+            {
+                _qBuf[i] = double.IsFinite(State.StartQ[i]) ? State.StartQ[i] : 0.0;
+            }
+        }
+        return _qBuf;
+    }
 
-    private double[] CurrentQDot => Snapshot is ExperimentSnapshot s
-        ? s.QDot.ToArray()
-        : [0.0, 0.0, 0.0, 0.0];
+    private double[] GetCurrentQDot()
+    {
+        if (Snapshot is ExperimentSnapshot s)
+        {
+            s.QDot.CopyTo(_qDotBuf);
+        }
+        else
+        {
+            Array.Clear(_qDotBuf, 0, 4);
+        }
+        return _qDotBuf;
+    }
 
     private bool PayloadAttached => Snapshot is ExperimentSnapshot s
         ? s.PayloadAttached

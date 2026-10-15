@@ -468,8 +468,11 @@
     private static readonly string[] _axisNames = ["X", "Y", "Z"];
 
     [Parameter, EditorRequired] public LabState State { get; set; } = null!;
+    [Parameter] public bool IsRunning { get; set; }
     [Parameter] public EventCallback OnScenarioSelected { get; set; }
     [Parameter] public EventCallback OnStateChanged { get; set; }
+
+    protected override bool ShouldRender() => !IsRunning;
 
     private bool ShowKi => State.ControlMethod == ControlMethod.PID || (State.ControlMethod == ControlMethod.CT && State.IntegralEnabled);
     private string KpUnit => State.ControlMethod == ControlMethod.CT ? "1/s²" : "N·m/rad";
@@ -491,7 +494,7 @@
 
     private async Task NotifyChanged()
     {
-        State.RecomputeValidationAndStability();
+        State.RecomputeValidation();
         await OnStateChanged.InvokeAsync();
     }
 
@@ -501,7 +504,7 @@
         var match = ScenarioLibrary.All.FirstOrDefault(s => s.Name == name);
         if (match is not null)
         {
-            State.LoadScenario(match);
+            State.LoadScenario(match, recomputeStabilityNow: false);
             await OnScenarioSelected.InvokeAsync();
         }
     }

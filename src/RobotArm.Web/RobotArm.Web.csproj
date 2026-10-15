@@ -7,6 +7,13 @@
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
   </PropertyGroup>
 
+  <!-- D10: AOT only when publishing Release. `dotnet publish` sets _IsPublishing; the wasm SDK's
+       nested publish clears it and sets WasmBuildingForNestedPublish. A plain
+       `dotnet build -c Release` (CI build and test) then needs no wasm-tools workload. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release' and ('$(_IsPublishing)' == 'true' or '$(WasmBuildingForNestedPublish)' == 'true')">
+    <RunAOTCompilation>true</RunAOTCompilation>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.13" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.13" PrivateAssets="all" />

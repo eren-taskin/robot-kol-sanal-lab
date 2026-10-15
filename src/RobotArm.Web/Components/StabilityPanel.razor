@@ -117,4 +117,7 @@
 
 @code {
     [Parameter, EditorRequired] public StabilityAnalysis Analysis { get; set; } = null!;
+    [Parameter] public bool IsRunning { get; set; }
+
+    protected override bool ShouldRender() => !IsRunning;
 }

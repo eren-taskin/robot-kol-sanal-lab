@@ -13,10 +13,13 @@
     </div>
 
     @{
-        var q = CurrentQ;
-        double[] qPlanar = [0.0, q[1], q[2], q[3]];
+        var q = GetCurrentQ();
+        _qPlanarBuf[0] = 0.0;
+        _qPlanarBuf[1] = q[1];
+        _qPlanarBuf[2] = q[2];
+        _qPlanarBuf[3] = q[3];
         var (frames3D, tool3D) = ForwardKinematics.ComputeFrames(_model, q);
-        var (framesPlanar, toolPlanar) = ForwardKinematics.ComputeFrames(_model, qPlanar);
+        var (framesPlanar, toolPlanar) = ForwardKinematics.ComputeFrames(_model, _qPlanarBuf);
 
         // Shoulder corner in planar view: frame 2 translated by (0, 0, a2z)
         var shoulderCornerPlanar = framesPlanar[1].TransformPoint(new Vector3d(0, 0, OpenManipulatorXGeometry.A2Z));
@@ -267,13 +270,27 @@
 
 @code {
     private static readonly ArmModel _model = ArmModel.OpenManipulatorX();
+    private readonly double[] _qBuf = new double[4];
+    private readonly double[] _qPlanarBuf = new double[4];
 
     [Parameter, EditorRequired] public LabState State { get; set; } = null!;
     [Parameter] public ExperimentSnapshot? Snapshot { get; set; }
 
-    private double[] CurrentQ => Snapshot is ExperimentSnapshot s
-        ? s.Q.ToArray()
-        : State.StartQ.Select(v => double.IsFinite(v) ? v : 0.0).ToArray();
+    private double[] GetCurrentQ()
+    {
+        if (Snapshot is ExperimentSnapshot s)
+        {
+            s.Q.CopyTo(_qBuf);
+        }
+        else
+        {
+            for (var i = 0; i < 4; i++)
+            {
+                _qBuf[i] = double.IsFinite(State.StartQ[i]) ? State.StartQ[i] : 0.0;
+            }
+        }
+        return _qBuf;
+    }
 
     private bool PayloadAttached => Snapshot is ExperimentSnapshot s
         ? s.PayloadAttached
