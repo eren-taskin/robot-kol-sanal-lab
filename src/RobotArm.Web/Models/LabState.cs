@@ -717,6 +717,37 @@ public sealed class LabState
         }
     }
 
+    public Planet GetTruePlanet() => ResolveTruePlanetSafe();
+
+    public double GetInitialPlantPayloadKg() =>
+        TaskKind == TaskKind.PickPlace ? 0.0 : Math.Clamp(double.IsFinite(PayloadKg) ? PayloadKg : 0.0, 0.0, 0.5);
+
+    public ControllerBelief BuildControllerBelief() => BuildControllerBeliefSafe();
+
+    public ILinearisableController BuildLinearisableController(ControllerBelief? beliefOverride = null)
+    {
+        var belief = beliefOverride ?? BuildControllerBeliefSafe();
+        var safeKp = new double[4];
+        var safeKd = new double[4];
+        var safeKi = new double[4];
+        for (var i = 0; i < 4; i++)
+        {
+            safeKp[i] = double.IsFinite(Kp[i]) && Kp[i] >= 0 ? Kp[i] : 0.0;
+            safeKd[i] = double.IsFinite(Kd[i]) && Kd[i] >= 0 ? Kd[i] : 0.0;
+            safeKi[i] = double.IsFinite(Ki[i]) && Ki[i] >= 0 ? Ki[i] : 0.0;
+        }
+
+        return ControlMethod switch
+        {
+            ControlMethod.PID => new Pid(belief, new PidGains(safeKp, safeKi, safeKd)),
+            ControlMethod.PDG => new PdGravity(belief, new PdGains(safeKp, safeKd)),
+            _ => new ComputedTorque(belief, new PdGains(safeKp, safeKd), PredictHalfSample,
+                IntegralEnabled ? safeKi : null)
+        };
+    }
+
+    public bool IsSimulationRunning { get; set; }
+
     private Planet ResolveTruePlanetSafe()
     {
         if (PlanetKey == Planet.CustomKey)

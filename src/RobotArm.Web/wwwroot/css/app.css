@@ -1232,3 +1232,297 @@ line.plot-zero {
     border-radius: 3px;
     background: linear-gradient(90deg, #dbeafe, #1e3a8a);
 }
+
+/* ---------- A2: Linear Analysis Page (/analiz) ---------- */
+.analysis-page {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+.analysis-top-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+}
+
+.analysis-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.analysis-perf-overlay {
+    margin-top: 0.15rem;
+}
+
+.analysis-setup-grid {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.2fr) minmax(190px, 1fr) minmax(260px, 1.8fr);
+    gap: 0.75rem;
+    align-items: end;
+}
+
+@media (max-width: 980px) {
+    .analysis-setup-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.setup-summary-pills,
+.bode-margins-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.summary-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    padding: 0.22rem 0.55rem;
+    border-radius: 4px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-light);
+    font-size: 0.78rem;
+    color: var(--text-main);
+}
+
+.summary-pill.pill-warn {
+    background: var(--warn-bg);
+    border-color: var(--warn-border);
+    color: var(--warn-color);
+}
+
+.analysis-pose-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.65rem;
+    padding-top: 0.45rem;
+    border-top: 1px solid var(--border-light);
+}
+
+.pose-inputs-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.pose-group-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.pose-input-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.pose-input-item label {
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin: 0;
+}
+
+.pose-input-item .form-control-sm {
+    width: 5.2rem;
+    padding: 0.2rem 0.4rem;
+    font-size: 0.8rem;
+}
+
+.gains-summary-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+    font-size: 0.78rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--text-muted);
+}
+
+.analysis-panels-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.85rem;
+    align-items: start;
+}
+
+@media (max-width: 1120px) {
+    .analysis-panels-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.analysis-panel-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    min-width: 0;
+}
+
+.analysis-explain {
+    margin: 0;
+    line-height: 1.42;
+    background: var(--bg-subtle);
+    border-left: 3px solid var(--accent);
+    padding: 0.4rem 0.6rem;
+    border-radius: 0 4px 4px 0;
+}
+
+.panel-controls-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 0.65rem;
+}
+
+.locus-summary-box {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+    font-size: 0.8rem;
+    padding: 0.3rem 0.55rem;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-light);
+    border-radius: 4px;
+}
+
+.muted-inline {
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
+.analysis-table-wrap {
+    margin-top: 0.25rem;
+}
+
+.compact-table th,
+.compact-table td {
+    padding: 0.26rem 0.45rem;
+    font-size: 0.77rem;
+}
+
+.row-danger {
+    background: var(--danger-bg);
+}
+
+.row-selected {
+    background: var(--accent-soft);
+}
+
+.text-danger-bold {
+    color: var(--danger-color);
+    font-weight: 700;
+}
+
+.text-warn-bold {
+    color: var(--warn-color);
+    font-weight: 700;
+}
+
+.lqr-weights-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.55rem;
+}
+
+@media (max-width: 720px) {
+    .lqr-weights-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.lqr-weight-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-light);
+    border-radius: 4px;
+    padding: 0.38rem 0.5rem;
+}
+
+.weight-group-label {
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.weight-inputs-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.28rem;
+}
+
+.weight-inputs-row .form-control-sm {
+    padding: 0.18rem 0.3rem;
+    font-size: 0.78rem;
+    text-align: right;
+}
+
+.tuner-action-btns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.tuner-config-grid {
+    display: grid;
+    grid-template-columns: minmax(200px, 1.15fr) minmax(220px, 1.35fr);
+    gap: 0.65rem;
+}
+
+@media (max-width: 720px) {
+    .tuner-config-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.tuner-scenarios-box,
+.tuner-options-box {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-light);
+    border-radius: 4px;
+    padding: 0.45rem 0.55rem;
+}
+
+.tuner-scenario-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.22rem;
+}
+
+.tuner-scenario-item {
+    font-size: 0.78rem;
+}
+
+.form-row-3 {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.4rem;
+}
+
+.tuner-progress-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.tuner-progress-labels {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    font-size: 0.78rem;
+}
+

@@ -104,7 +104,16 @@
     private CancellationTokenSource? _loopCts;
     private CancellationTokenSource? _stabilityDebounceCts;
     private bool _runnerStarted;
-    private bool _isRunning;
+    private bool _isRunningBacking;
+    private bool _isRunning
+    {
+        get => _isRunningBacking;
+        set
+        {
+            _isRunningBacking = value;
+            _state.IsSimulationRunning = value;
+        }
+    }
     private bool _isPaused;
     private bool _isFinished;
     private bool _fastMode;
@@ -717,6 +726,7 @@
 
     public void Dispose()
     {
+        _isRunning = false;
         CancelLoop();
         CancelStabilityDebounce();
     }

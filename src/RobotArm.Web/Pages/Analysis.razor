@@ -1,0 +1,1706 @@
+@page "/analiz"
+@using System.Diagnostics
+@implements IDisposable
+@inject LabState _state
+
+<PageTitle>Doğrusal Sistem Analizi — KON 445E</PageTitle>
+
+<div class="analysis-page" id="analiz-page">
+    <!-- Top Setup & Pose Bar -->
+    <section class="panel-card analysis-top-card" id="analiz-setup-card">
+        <div class="panel-header">
+            <div>
+                <h2>Doğrusal Sistem Analizi (Ayrık Zamanlı Çevrim)</h2>
+                <span class="muted-note">
+                    Kurulum <strong>Laboratuvar</strong> sayfasıyla paylaşılır. Girdiler değiştikten 300 ms sonra veya <strong>Hesapla</strong> düğmesiyle yeniden hesaplanır (deney çalışırken hesaplama yapılmaz).
+                </span>
+            </div>
+            <div class="analysis-header-actions">
+                <button type="button" class="btn-action btn-primary" id="analiz-compute-btn"
+                        disabled="@_state.IsSimulationRunning"
+                        @onclick="ComputeImmediate">
+                    Hesapla
+                </button>
+                <button type="button" class="btn-perf @(_showPerfOverlay ? "btn-perf-active" : "")"
+                        id="analiz-perf-toggle"
+                        title="Analiz hesaplama ve çizim sürelerini göster/gizle"
+                        @onclick="TogglePerfOverlay">
+                    Performans
+                </button>
+            </div>
+        </div>
+
+        @if (_showPerfOverlay)
+        {
+            <div class="perf-overlay analysis-perf-overlay" id="analiz-perf-overlay">
+                <span class="perf-item" title="Son tam analiz hesaplama süresi">
+                    Toplam hesaplama: <strong id="perf-total-ms">@LabFormat.Fixed(_lastTotalComputeMs, 2) ms</strong>
+                </span>
+                <span class="perf-sep">·</span>
+                <span class="perf-item">
+                    Kutup + Bode: <strong>@LabFormat.Fixed(_lastPolesBodeMs, 2) ms</strong>
+                </span>
+                <span class="perf-sep">·</span>
+                <span class="perf-item">
+                    Kök yer eğrisi: <strong>@LabFormat.Fixed(_lastRootLocusMs, 2) ms</strong>
+                </span>
+                <span class="perf-sep">·</span>
+                <span class="perf-item">
+                    Basamak: <strong>@LabFormat.Fixed(_lastStepMs, 2) ms</strong>
+                </span>
+                <span class="perf-sep">·</span>
+                <span class="perf-item">
+                    LQR: <strong>@LabFormat.Fixed(_lastLqrMs, 2) ms</strong>
+                </span>
+                <span class="perf-sep">·</span>
+                <span class="perf-item" title="Son Blazor bileşen çizim süresi">
+                    Çizim (render): <strong id="perf-render-ms">@LabFormat.Fixed(_lastRenderMs, 2) ms</strong>
+                </span>
+            </div>
+        }
+
+        @if (_state.IsSimulationRunning)
+        {
+            <div class="alert-box alert-warning" id="analiz-running-warning">
+                Laboratuvar sayfasında bir deney çalışıyor. Deney durdurulana veya tamamlanana kadar analiz hesaplamaları askıya alınmıştır.
+            </div>
+        }
+
+        <div class="analysis-setup-grid">
+            <div class="form-group">
+                <label for="analiz-scenario-select">Hazır Senaryo Yükle</label>
+                <select id="analiz-scenario-select" class="form-control"
+                        value="@_state.SelectedLibraryName"
+                        disabled="@_state.IsSimulationRunning"
+                        @onchange="OnScenarioSelected">
+                    @foreach (var s in ScenarioLibrary.All)
+                    {
+                        <option value="@s.Name">@s.Name</option>
+                    }
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="analiz-controller-select">Kontrolcü</label>
+                <select id="analiz-controller-select" class="form-control"
+                        value="@_state.ControllerKey"
+                        disabled="@_state.IsSimulationRunning"
+                        @onchange="OnControllerChanged">
+                    <option value="PID">PID</option>
+                    <option value="PDG">PDG (PD + Yerçekimi)</option>
+                    <option value="CT">CT (Hesaplanmış Tork)</option>
+                    <option value="CT+I">CT+I (Hesaplanmış Tork + İntegral)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Ortam ve Örnekleme Özeti</label>
+                <div class="setup-summary-pills" id="analiz-setup-summary">
+                    <span class="summary-pill">Gezegen: <strong>@_state.GetTruePlanet().DisplayName</strong> (@LabFormat.Fixed(_state.GetTruePlanet().G, 2) m/s²)</span>
+                    <span class="summary-pill">Yük: <strong>@LabFormat.Fixed(_state.GetInitialPlantPayloadKg(), 2) kg</strong></span>
+                    <span class="summary-pill">Ts: <strong>@LabFormat.Input(_state.SamplePeriodSeconds * 1000) ms</strong></span>
+                    <span class="summary-pill">h: <strong>@LabFormat.Input(_state.StepSeconds * 1000) ms</strong></span>
+                </div>
+            </div>
+        </div>
+
+        <div class="analysis-pose-row">
+            <div class="pose-inputs-group">
+                <span class="pose-group-title">Analiz Çalışma Noktası q₀ (rad):</span>
+                @for (var i = 0; i < 4; i++)
+                {
+                    var idx = i;
+                    <div class="pose-input-item">
+                        <label for="analiz-q0-@idx">q@(idx + 1)</label>
+                        <input id="analiz-q0-@idx" type="text" inputmode="decimal"
+                               class="form-control form-control-sm @(_poseErrors[idx] is not null ? "input-invalid" : "")"
+                               value="@LabFormat.Input(_analysisQ[idx])"
+                               disabled="@_state.IsSimulationRunning"
+                               @onchange="e => OnPoseChanged(idx, e.Value?.ToString())" />
+                    </div>
+                }
+                <button type="button" class="btn-secondary btn-xs" id="analiz-reset-pose-btn"
+                        disabled="@_state.IsSimulationRunning"
+                        @onclick="ResetPoseToStart">
+                    Başlangıç pozuna sıfırla
+                </button>
+            </div>
+
+            <div class="gains-summary-bar" id="analiz-gains-summary">
+                <span><strong>Kp:</strong> [@string.Join("; ", _state.Kp.Select(v => LabFormat.Input(v, "G5")))]</span>
+                <span><strong>Kd:</strong> [@string.Join("; ", _state.Kd.Select(v => LabFormat.Input(v, "G5")))]</span>
+                @if (HasIntegral)
+                {
+                    <span><strong>Ki:</strong> [@string.Join("; ", _state.Ki.Select(v => LabFormat.Input(v, "G5")))]</span>
+                }
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(_poseValidationMessage))
+        {
+            <div class="field-error" id="analiz-pose-error">@_poseValidationMessage</div>
+        }
+        @if (!string.IsNullOrEmpty(_statusBanner))
+        {
+            <div class="status-banner status-ok" id="analiz-status-banner">@_statusBanner</div>
+        }
+    </section>
+
+    <div class="analysis-panels-grid">
+        <!-- PANEL 1: KUTUP HARİTASI -->
+        <section class="panel-card analysis-panel-card" id="panel-poles">
+            <div class="panel-header">
+                <h3>1. Kutup Haritası (z-Düzlemi)</h3>
+                @if (_poles is not null)
+                {
+                    var stable = _poles.SpectralRadius < 1.0;
+                    <span class="status-badge @(stable ? "badge-ok" : "badge-err")" id="poles-rho-badge"
+                          data-rho="@_poles.SpectralRadius.ToString("F6", CultureInfo.InvariantCulture)">
+                        @(stable ? "Kararlı" : "Kararsız") · ρ = @LabFormat.Fixed(_poles.SpectralRadius, 6)
+                    </span>
+                }
+            </div>
+
+            <p class="muted-note analysis-explain">
+                <strong>Bu grafik ne gösterir?</strong> Ayrık zamanlı kapalı çevrim sistemin z-düzlemindeki kutuplarını ve birim çemberi (|z| = 1) eşit ölçekli eksenlerde gösterir.
+                Sistemin çalışma noktası etrafında kararlı olması için tüm kutupların birim çemberin içinde kalması, yani spektral yarıçapın ρ = max|z| &lt; 1 olması gerekir.
+                Tabloda her kutbun s = ln(z)/Ts dönüşümüyle bulunan eşdeğer sürekli zaman doğal frekansı ωn (rad/s) ve sönüm oranı ζ listelenir.
+            </p>
+
+            <Plot Spec="_polePlotSpec" Height="270" />
+
+            @if (_poles is not null)
+            {
+                <div class="table-scroll analysis-table-wrap">
+                    <table class="data-table compact-table" id="poles-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>z (Re ± j·Im)</th>
+                                <th>|z|</th>
+                                <th>s = ln(z)/Ts (1/s)</th>
+                                <th>ωn (rad/s)</th>
+                                <th>ζ</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (var i = 0; i < _poles.Poles.Count; i++)
+                            {
+                                var p = _poles.Poles[i];
+                                var unstable = p.Modulus >= 1.0;
+                                <tr class="@(unstable ? "row-danger" : "")">
+                                    <td>@(i + 1)</td>
+                                    <td class="num-col">@FormatComplex(p.Z, 5)</td>
+                                    <td class="num-col @(unstable ? "text-danger-bold" : "")">@LabFormat.Fixed(p.Modulus, 6)</td>
+                                    <td class="num-col">@FormatComplex(p.S, 2)</td>
+                                    <td class="num-col">@LabFormat.Fixed(p.NaturalFrequency, 2)</td>
+                                    <td class="num-col">@LabFormat.Fixed(p.DampingRatio, 3)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+
+        <!-- PANEL 2: KÖK YER EĞRİSİ -->
+        <section class="panel-card analysis-panel-card" id="panel-root-locus">
+            <div class="panel-header">
+                <h3>2. Kök Yer Eğrisi (Root Locus)</h3>
+                @if (_rootLocus is not null)
+                {
+                    if (_rootLocus.CriticalValue is double crit)
+                    {
+                        var critDb = _locusGain == LocusGain.Scale && crit > 0
+                            ? $" ({LabFormat.Fixed(20.0 * Math.Log10(crit), 2)} dB)"
+                            : "";
+                        <span class="status-badge badge-warn" id="locus-critical-badge"
+                              data-critical-value="@crit.ToString("G8", CultureInfo.InvariantCulture)"
+                              data-critical-fixed="@crit.ToString("F4", CultureInfo.InvariantCulture)">
+                            Kritik sınır (ρ = 1): @ParamSymbol = @LabFormat.Fixed(crit, 4)@critDb
+                        </span>
+                    }
+                    else
+                    {
+                        <span class="status-badge badge-ok" id="locus-critical-badge" data-critical-value="none">
+                            Taranan aralıkta ρ = 1 geçişi yok
+                        </span>
+                    }
+                }
+            </div>
+
+            <p class="muted-note analysis-explain">
+                <strong>Bu grafik ne gösterir?</strong> Seçilen kazanç parametresi (tüm kazançları birlikte çarpan ortak ölçek çarpanı k veya tek bir eklemin Kp, Kd, Ki kazancı) küçük değerlerden büyük değerlere doğru logaritmik bir ızgarada taranırken kapalı çevrim z-kutuplarının izlediği yörüngeleri gösterir.
+                Mevcut kazançtaki kutuplar işaretlenir ve herhangi bir kutbun birim çemberi (|z| = 1) terk ettiği ilk kritik değer (ρ = 1 sınırı) ikiye bölme yöntemiyle bulunur.
+            </p>
+
+            <div class="panel-controls-row">
+                <div class="form-group">
+                    <label for="locus-param-select">Taranan Parametre</label>
+                    <select id="locus-param-select" class="form-control form-control-sm"
+                            value="@_locusGain"
+                            disabled="@_state.IsSimulationRunning"
+                            @onchange="OnLocusGainChanged">
+                        <option value="@LocusGain.Scale">Ortak ölçek çarpanı k (tüm kazançlar)</option>
+                        <option value="@LocusGain.Kp">Eklem Kp kazancı</option>
+                        <option value="@LocusGain.Kd">Eklem Kd kazancı</option>
+                        @if (HasIntegral)
+                        {
+                            <option value="@LocusGain.Ki">Eklem Ki kazancı</option>
+                        }
+                    </select>
+                </div>
+
+                @if (_locusGain != LocusGain.Scale)
+                {
+                    <div class="form-group">
+                        <label for="locus-joint-select">Eklem</label>
+                        <select id="locus-joint-select" class="form-control form-control-sm"
+                                value="@_locusJoint"
+                                disabled="@_state.IsSimulationRunning"
+                                @onchange="OnLocusJointChanged">
+                            @for (var j = 0; j < 4; j++)
+                            {
+                                <option value="@j">Eklem @(j + 1)</option>
+                            }
+                        </select>
+                    </div>
+                }
+
+                <div class="locus-summary-box" id="locus-summary-box">
+                    <span>Mevcut değer: <strong>@ParamSymbol = @LabFormat.Input(_locusNominalValue, "G5")</strong></span>
+                    @if (_rootLocus?.CriticalValue is double cv)
+                    {
+                        <span>Kritik değer: <strong id="locus-critical-value">@LabFormat.Fixed(cv, 4)</strong> <small class="muted-inline">(@cv.ToString("F4", CultureInfo.InvariantCulture))</small></span>
+                    }
+                    <label class="checkbox-label" style="margin-left:0.25rem">
+                        <input type="checkbox" id="locus-zoom-check"
+                               checked="@_locusZoomUnitCircle"
+                               disabled="@_state.IsSimulationRunning"
+                               @onchange="OnLocusZoomChanged" />
+                        Birim çembere odakla
+                    </label>
+                </div>
+            </div>
+
+            <Plot Spec="_rootLocusPlotSpec" Height="270" />
+        </section>
+
+        <!-- PANEL 3: BODE -->
+        <section class="panel-card analysis-panel-card" id="panel-bode">
+            <div class="panel-header">
+                <h3>3. Bode Diyagramı (Tek Eklemli Açık Çevrim)</h3>
+                <div class="mode-toggle" role="group" aria-label="Bode eklem seçimi">
+                    @for (var j = 0; j < 4; j++)
+                    {
+                        var jointIndex = j;
+                        <button type="button"
+                                class="mode-btn @(_bodeJoint == jointIndex ? "mode-active" : "")"
+                                id="bode-joint-btn-@(jointIndex + 1)"
+                                disabled="@_state.IsSimulationRunning"
+                                @onclick="() => SelectBodeJoint(jointIndex)">
+                            Eklem @(jointIndex + 1)
+                        </button>
+                    }
+                </div>
+            </div>
+
+            <p class="muted-note analysis-explain">
+                <strong>Bu grafik ne gösterir?</strong> Seçilen eklemin çevrimi kendi girişinden açılıp diğer üç eklemin çevrimi kapalı tutulurken elde edilen Lᵢ(e^(jωTs)) ayrık açık çevrim frekans yanıtının genlik (dB) ve faz (derece) eğrilerini logaritmik frekans ekseninde gösterir.
+                Grafikler üzerinde 0 dB kazanç geçiş frekansı (ωgc) ile faz payı (PM) ve −180° faz geçiş frekansı (ωpc) ile kazanç payı (GM) işaretlenir.
+            </p>
+
+            @if (SelectedBode is { } bode)
+            {
+                @if (bode.OpenLoopUnstablePoles > 0)
+                {
+                    <div class="alert-box alert-warning" id="bode-nyquist-note">
+                        <strong>Nyquist Uyarısı:</strong> Eklem @(bode.Joint + 1) çevrimi açıldığında kalan alt sistemin birim çember dışında
+                        <strong>@bode.OpenLoopUnstablePoles adet kararsız açık çevrim kutbu</strong> (yerçekimi kaynaklı) bulunmaktadır.
+                        Bu nedenle kazanç ve faz payları tek başına kararlılığı belirlemez; paylar <strong>Nyquist kararlılık ölçütü</strong> ile birlikte okunmalıdır.
+                    </div>
+                }
+
+                <div class="bode-margins-bar" id="bode-margins-bar">
+                    <span class="summary-pill">
+                        Kazanç Payı (GM): <strong>@FormatMarginDb(bode.GainMarginDb)</strong>
+                        <small>(ωpc = @FormatFreq(bode.PhaseCrossoverFrequency))</small>
+                    </span>
+                    <span class="summary-pill">
+                        Faz Payı (PM): <strong>@FormatMarginDeg(bode.PhaseMarginDeg)</strong>
+                        <small>(ωgc = @FormatFreq(bode.GainCrossoverFrequency))</small>
+                    </span>
+                    <span class="summary-pill @(bode.OpenLoopUnstablePoles > 0 ? "pill-warn" : "")">
+                        Açık çevrim kararsız kutup: <strong>@bode.OpenLoopUnstablePoles</strong>
+                    </span>
+                </div>
+
+                <Plot Spec="_bodeMagPlotSpec" Height="185" />
+                <Plot Spec="_bodePhasePlotSpec" Height="185" />
+
+                @if (_bodeAll is not null)
+                {
+                    <div class="table-scroll analysis-table-wrap">
+                        <table class="data-table compact-table" id="bode-summary-table">
+                            <thead>
+                                <tr>
+                                    <th>Eklem</th>
+                                    <th>Kazanç Payı (GM)</th>
+                                    <th>ωpc (rad/s)</th>
+                                    <th>Faz Payı (PM)</th>
+                                    <th>ωgc (rad/s)</th>
+                                    <th>Kararsız AÇ Kutbu</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var r in _bodeAll)
+                                {
+                                    <tr class="@(r.Joint == _bodeJoint ? "row-selected" : "")">
+                                        <td><strong>Eklem @(r.Joint + 1)</strong></td>
+                                        <td class="num-col">@FormatMarginDb(r.GainMarginDb)</td>
+                                        <td class="num-col">@FormatFreq(r.PhaseCrossoverFrequency)</td>
+                                        <td class="num-col">@FormatMarginDeg(r.PhaseMarginDeg)</td>
+                                        <td class="num-col">@FormatFreq(r.GainCrossoverFrequency)</td>
+                                        <td class="num-col @(r.OpenLoopUnstablePoles > 0 ? "text-warn-bold" : "")">@r.OpenLoopUnstablePoles</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            }
+        </section>
+
+        <!-- PANEL 4: DOĞRUSAL VE DOĞRUSAL OLMAYAN KARŞILAŞTIRMA -->
+        <section class="panel-card analysis-panel-card" id="panel-step-compare">
+            <div class="panel-header">
+                <h3>4. Doğrusal ve Doğrusal Olmayan Karşılaştırma</h3>
+                <span class="status-badge @(_stepRelativeDiffPercent <= 5.0 ? "badge-ok" : "badge-warn")"
+                      id="step-diff-badge"
+                      data-diff-percent="@_stepRelativeDiffPercent.ToString("F3", CultureInfo.InvariantCulture)">
+                    Fark: %@LabFormat.Fixed(_stepRelativeDiffPercent, 2) (Δq_maks = @LabFormat.Fixed(_stepMaxAbsDiffRad, 5) rad)
+                </span>
+            </div>
+
+            <p class="muted-note analysis-explain">
+                <strong>Bu grafik ne gösterir?</strong> Çalışma noktası q₀ etrafında doğrusallaştırılmış ayrık modelin basamak yanıtı (<code>LinearStepResponse</code>) ile gerçek doğrusal olmayan simülasyonun (<code>ExperimentRunner</code> / RK4 kontrol çevrimi) yanıtını aynı zaman ekseninde üst üste karşılaştırır.
+                Küçük basamaklarda (0,003 ve 0,01 rad) iki yanıt birbirine çok yakınken, büyük basamaklarda (0,1 ve 0,5 rad) Coulomb sürtünme bandı, yerçekimi doğrusallaştırması, Coriolis terimleri ve tork doyumu nedeniyle yüzde fark büyür.
+            </p>
+
+            <div class="panel-controls-row">
+                <div class="form-group">
+                    <label for="step-joint-select">İncelenen Eklem</label>
+                    <select id="step-joint-select" class="form-control form-control-sm"
+                            value="@_stepJoint"
+                            disabled="@_state.IsSimulationRunning"
+                            @onchange="OnStepJointChanged">
+                        @for (var j = 0; j < 4; j++)
+                        {
+                            <option value="@j">Eklem @(j + 1)</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Basamak Büyüklüğü δ (rad)</label>
+                    <div class="mode-toggle" role="group" aria-label="Basamak büyüklüğü">
+                        @foreach (var stepVal in StepSizes)
+                        {
+                            var sv = stepVal;
+                            <button type="button"
+                                    class="mode-btn @(Math.Abs(_stepSizeRad - sv) < 1e-9 ? "mode-active" : "")"
+                                    id="step-size-@sv.ToString(CultureInfo.InvariantCulture).Replace('.', '_')"
+                                    disabled="@_state.IsSimulationRunning"
+                                    @onclick="() => SelectStepSize(sv)">
+                                @LabFormat.Input(sv) rad
+                            </button>
+                        }
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="step-all-joints-check" class="checkbox-label">
+                        <input id="step-all-joints-check" type="checkbox"
+                               checked="@_stepAllJoints"
+                               disabled="@_state.IsSimulationRunning"
+                               @onchange="OnStepAllJointsChanged" />
+                        4 ekleme ortak basamak uygula (SPEC §12.5 V40)
+                    </label>
+                </div>
+            </div>
+
+            <div class="bode-margins-bar" id="step-metrics-bar">
+                <span class="summary-pill">
+                    Eklem @(_stepJoint + 1) tepe farkı: <strong>%@LabFormat.Fixed(_stepRelativeDiffPercent, 2)</strong>
+                </span>
+                <span class="summary-pill">
+                    Tüm eklemler tepe farkı: <strong>%@LabFormat.Fixed(_stepAllJointsWorstPercent, 2)</strong>
+                </span>
+                <span class="summary-pill @(_stepClamped ? "pill-warn" : "")">
+                    Tork kırpma / doyum: <strong>@(_stepClamped ? "Var" : "Yok")</strong>
+                </span>
+                @if (_stepFaultMessage is not null)
+                {
+                    <span class="summary-pill pill-warn">@_stepFaultMessage</span>
+                }
+            </div>
+
+            <Plot Spec="_stepComparePlotSpec" Height="250" />
+        </section>
+
+        <!-- PANEL 5: LQR -->
+        <section class="panel-card analysis-panel-card" id="panel-lqr">
+            <div class="panel-header">
+                <h3>5. Ayrık Zamanlı LQR ve Köşegen İzdüşüm</h3>
+                <button type="button" class="btn-action btn-primary btn-sm" id="lqr-apply-btn"
+                        disabled="@(_state.IsSimulationRunning || _lqrResult?.Projection is null)"
+                        @onclick="ApplyLqrProjectionGains">
+                    Köşegen kazançları uygula
+                </button>
+            </div>
+
+            <p class="muted-note analysis-explain">
+                <strong>Bu grafik ne gösterir?</strong> Seçilen durum (Q konum ve hız) ile kontrol girişi (R) ağırlıkları için ayrık zamanlı cebirsel Riccati denklemini (<code>DiscreteLqr</code>) çözerek tam durum geri beslemeli (4×8) LQR kutuplarını ve yalnızca eklemlerin kendi terimlerini tutan köşegen izdüşümün (Kp,i = K[i,i], Kd,i = K[i,4+i]) kutuplarını karşılaştırır.
+                Böylece eklemler arası çapraz kuplaj kazançları atıldığında kapalı çevrim kutuplarının ve spektral yarıçapın (ρ) nasıl değiştiği görülür; <strong>Köşegen kazançları uygula</strong> düğmesi bu Kp/Kd kazançlarını kuruluma yazar.
+            </p>
+
+            <div class="lqr-weights-grid">
+                <div class="lqr-weight-group">
+                    <span class="weight-group-label">Q Konum Ağırlıkları (q₁..q₄)</span>
+                    <div class="weight-inputs-row">
+                        @for (var i = 0; i < 4; i++)
+                        {
+                            var idx = i;
+                            <input id="lqr-qpos-@idx" type="text" inputmode="decimal"
+                                   class="form-control form-control-sm"
+                                   title="Eklem @(idx + 1) konum ağırlığı"
+                                   value="@LabFormat.Input(_lqrPosWeights[idx])"
+                                   disabled="@_state.IsSimulationRunning"
+                                   @onchange="e => OnLqrWeightChanged(_lqrPosWeights, idx, e.Value?.ToString())" />
+                        }
+                    </div>
+                </div>
+
+                <div class="lqr-weight-group">
+                    <span class="weight-group-label">Q Hız Ağırlıkları (q̇₁..q̇₄)</span>
+                    <div class="weight-inputs-row">
+                        @for (var i = 0; i < 4; i++)
+                        {
+                            var idx = i;
+                            <input id="lqr-qvel-@idx" type="text" inputmode="decimal"
+                                   class="form-control form-control-sm"
+                                   title="Eklem @(idx + 1) hız ağırlığı"
+                                   value="@LabFormat.Input(_lqrVelWeights[idx])"
+                                   disabled="@_state.IsSimulationRunning"
+                                   @onchange="e => OnLqrWeightChanged(_lqrVelWeights, idx, e.Value?.ToString())" />
+                        }
+                    </div>
+                </div>
+
+                <div class="lqr-weight-group">
+                    <span class="weight-group-label">R Tork Ağırlıkları (u₁..u₄)</span>
+                    <div class="weight-inputs-row">
+                        @for (var i = 0; i < 4; i++)
+                        {
+                            var idx = i;
+                            <input id="lqr-r-@idx" type="text" inputmode="decimal"
+                                   class="form-control form-control-sm"
+                                   title="Eklem @(idx + 1) kontrol ağırlığı"
+                                   value="@LabFormat.Input(_lqrInputWeights[idx])"
+                                   disabled="@_state.IsSimulationRunning"
+                                   @onchange="e => OnLqrWeightChanged(_lqrInputWeights, idx, e.Value?.ToString())" />
+                        }
+                    </div>
+                </div>
+            </div>
+
+            @if (_lqrResult is { } lqr && lqr.Projection is { } proj)
+            {
+                <div class="bode-margins-bar" id="lqr-summary-bar">
+                    <span class="summary-pill @(lqr.Poles.SpectralRadius < 1.0 ? "" : "pill-warn")">
+                        Tam LQR ρ: <strong>@LabFormat.Fixed(lqr.Poles.SpectralRadius, 6)</strong>
+                    </span>
+                    <span class="summary-pill @(proj.SpectralRadius < 1.0 ? "" : "pill-warn")">
+                        Köşegen izdüşüm ρ: <strong id="lqr-proj-rho">@LabFormat.Fixed(proj.SpectralRadius, 6)</strong>
+                    </span>
+                    <span class="summary-pill">
+                        DARE kalıntısı: <strong>@lqr.Residual.ToString("0.##E+0", CultureInfo.InvariantCulture).Replace('.', ',')</strong>
+                    </span>
+                </div>
+
+                <Plot Spec="_lqrPlotSpec" Height="250" />
+
+                <div class="table-scroll analysis-table-wrap">
+                    <table class="data-table compact-table" id="lqr-gains-table">
+                        <thead>
+                            <tr>
+                                <th>Eklem</th>
+                                <th>Köşegen Kp (K[i,i])</th>
+                                <th>Köşegen Kd (K[i,4+i])</th>
+                                <th>Tam LQR Kutbu (ωn, ζ)</th>
+                                <th>Köşegen Kutbu (ωn, ζ)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (var i = 0; i < 4; i++)
+                            {
+                                var fp = i < lqr.Poles.Poles.Count ? lqr.Poles.Poles[i] : (DiscretePole?)null;
+                                var dp = i < proj.Poles.Poles.Count ? proj.Poles.Poles[i] : (DiscretePole?)null;
+                                <tr>
+                                    <td><strong>Eklem @(i + 1)</strong></td>
+                                    <td class="num-col">@LabFormat.Fixed(proj.Kp[i], 4)</td>
+                                    <td class="num-col">@LabFormat.Fixed(proj.Kd[i], 4)</td>
+                                    <td class="num-col">@(fp is { } f ? $"|z|={LabFormat.Fixed(f.Modulus, 4)}, ωn={LabFormat.Fixed(f.NaturalFrequency, 1)}, ζ={LabFormat.Fixed(f.DampingRatio, 2)}" : "—")</td>
+                                    <td class="num-col">@(dp is { } d ? $"|z|={LabFormat.Fixed(d.Modulus, 4)}, ωn={LabFormat.Fixed(d.NaturalFrequency, 1)}, ζ={LabFormat.Fixed(d.DampingRatio, 2)}" : "—")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+
+        <!-- PANEL 6: OTOMATİK AYAR (GAIN TUNER) -->
+        <section class="panel-card analysis-panel-card" id="panel-tuner">
+            <div class="panel-header">
+                <h3>6. Otomatik Kazanç Ayarı (GainTuner · Nelder–Mead)</h3>
+                <div class="tuner-action-btns">
+                    <button type="button" class="btn-action btn-primary btn-sm" id="tuner-start-btn"
+                            disabled="@(_state.IsSimulationRunning || _tunerRunning || _selectedTunerScenarios.Count == 0)"
+                            @onclick="StartTunerAsync">
+                        Başlat
+                    </button>
+                    <button type="button" class="btn-action btn-danger btn-sm" id="tuner-cancel-btn"
+                            disabled="@(!_tunerRunning)"
+                            @onclick="CancelTuner">
+                        İptal
+                    </button>
+                    <button type="button" class="btn-action btn-secondary btn-sm" id="tuner-apply-btn"
+                            disabled="@(_state.IsSimulationRunning || _tunerRunning || _tunerResult is null)"
+                            @onclick="ApplyTunedGains">
+                        Kazançları uygula
+                    </button>
+                </div>
+            </div>
+
+            <p class="muted-note analysis-explain">
+                <strong>Bu grafik ne gösterir?</strong> Seçilen senaryolar üzerinde ρ &lt; 1, minimum kazanç payı (GM) ve faz payı (PM) kısıtlarını sağlayan (ωn, ζ) kazanç adaylarını Nelder–Mead simpleks aramasıyla (<code>GainTuner</code>) değerlendirerek ITAE izleme maliyetini en küçükler.
+                Grafikte değerlendirme adımlarına göre en iyi maliyetin düşüşü, tabloda ise başlangıç (referans) kazançları ile bulunan en iyi kazançların maliyet ve kararlılık payı karşılaştırması gösterilir.
+            </p>
+
+            <div class="tuner-config-grid">
+                <div class="tuner-scenarios-box">
+                    <span class="weight-group-label">Senaryolar (Çoklu Seçim)</span>
+                    <div class="tuner-scenario-list" id="tuner-scenario-list">
+                        @for (var i = 0; i < ScenarioLibrary.All.Count; i++)
+                        {
+                            var s = ScenarioLibrary.All[i];
+                            var checkedVal = _selectedTunerScenarios.Contains(s.Name);
+                            <label class="checkbox-label tuner-scenario-item">
+                                <input type="checkbox"
+                                       id="tuner-scen-@i"
+                                       checked="@checkedVal"
+                                       disabled="@(_tunerRunning || _state.IsSimulationRunning)"
+                                       @onchange="e => ToggleTunerScenario(s.Name, e.Value is true)" />
+                                <span>@s.Name</span>
+                            </label>
+                        }
+                    </div>
+                </div>
+
+                <div class="tuner-options-box">
+                    <div class="form-group">
+                        <label for="tuner-sensor-select">Sensör Modu</label>
+                        <select id="tuner-sensor-select" class="form-control form-control-sm"
+                                value="@_tunerSensorMode"
+                                disabled="@(_tunerRunning || _state.IsSimulationRunning)"
+                                @onchange="e => _tunerSensorMode = Enum.Parse<TuningSensorMode>(e.Value!.ToString()!)">
+                            <option value="@TuningSensorMode.Scenario">Kusursuz / Senaryo sensörü</option>
+                            <option value="@TuningSensorMode.PerfectAndEncoder">Kusursuz ve Kodlayıcı birlikte</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="tuner-agg-select">Maliyet Birleştirme</label>
+                        <select id="tuner-agg-select" class="form-control form-control-sm"
+                                value="@_tunerAggregation"
+                                disabled="@(_tunerRunning || _state.IsSimulationRunning)"
+                                @onchange="e => _tunerAggregation = Enum.Parse<TuningCostAggregation>(e.Value!.ToString()!)">
+                            <option value="@TuningCostAggregation.Sum">Toplam (Sum)</option>
+                            <option value="@TuningCostAggregation.Max">En Kötü Durum (Max)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-row-3">
+                        <div class="form-group">
+                            <label for="tuner-min-gm">Min GM (dB)</label>
+                            <input id="tuner-min-gm" type="text" inputmode="decimal"
+                                   class="form-control form-control-sm"
+                                   value="@LabFormat.Input(_tunerMinGmDb)"
+                                   disabled="@(_tunerRunning || _state.IsSimulationRunning)"
+                                   @onchange="e => { if (LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) && v >= 0) _tunerMinGmDb = v; }" />
+                        </div>
+
+                        <div class="form-group">
+                            <label for="tuner-min-pm">Min PM (°)</label>
+                            <input id="tuner-min-pm" type="text" inputmode="decimal"
+                                   class="form-control form-control-sm"
+                                   value="@LabFormat.Input(_tunerMinPmDeg)"
+                                   disabled="@(_tunerRunning || _state.IsSimulationRunning)"
+                                   @onchange="e => { if (LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) && v >= 0) _tunerMinPmDeg = v; }" />
+                        </div>
+
+                        <div class="form-group">
+                            <label for="tuner-max-evals">Maks. Değerlendirme</label>
+                            <input id="tuner-max-evals" type="number" min="2" max="120"
+                                   class="form-control form-control-sm"
+                                   value="@_tunerMaxEvaluations"
+                                   disabled="@(_tunerRunning || _state.IsSimulationRunning)"
+                                   @onchange="e => { if (LabFormat.TryParseIntInvariant(e.Value?.ToString(), out var n)) _tunerMaxEvaluations = Math.Clamp(n, 2, 120); }" />
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            @if (_tunerRunning || _tunerProgress is not null || _tunerResult is not null)
+            {
+                var done = _tunerResult?.History.Count ?? _tunerProgress?.Evaluation ?? 0;
+                var total = _tunerProgress?.MaxEvaluations ?? _tunerMaxEvaluations;
+                var pct = total > 0 ? Math.Clamp(100.0 * done / total, 0.0, 100.0) : 0.0;
+                <div class="tuner-progress-wrap" id="tuner-progress-wrap">
+                    <div class="tuner-progress-labels">
+                        <span>
+                            Durum:
+                            <strong>@(_tunerRunning ? "Çalışıyor…" : _tunerResult?.Cancelled == true ? "İptal edildi" : "Tamamlandı")</strong>
+                            (@done / @total değerlendirme)
+                        </span>
+                        @if (_tunerProgress?.Best is { } curBest)
+                        {
+                            <span>En iyi maliyet: <strong>@LabFormat.Fixed(curBest.Cost, 5)</strong></span>
+                        }
+                    </div>
+                    <div class="progress-track" role="progressbar" aria-valuenow="@((int)Math.Round(pct))" aria-valuemin="0" aria-valuemax="100">
+                        <div class="progress-fill" style="width:@(pct.ToString("F1", CultureInfo.InvariantCulture))%"></div>
+                    </div>
+                </div>
+            }
+
+            @if (_tunerPlotSpec is not null)
+            {
+                <Plot Spec="_tunerPlotSpec" Height="190" />
+            }
+
+            @if (_tunerResult is { } tr)
+            {
+                <div class="table-scroll analysis-table-wrap">
+                    <table class="data-table compact-table" id="tuner-results-table">
+                        <thead>
+                            <tr>
+                                <th>Aday</th>
+                                <th>Maliyet</th>
+                                <th>ITAE (m·s²)</th>
+                                <th>ρ (maks)</th>
+                                <th>Min GM (dB)</th>
+                                <th>Min PM (°)</th>
+                                <th>Kp [1..4]</th>
+                                <th>Kd [1..4]</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>Başlangıç (#@tr.Baseline.Index)</strong></td>
+                                <td class="num-col" id="tuner-baseline-cost">@LabFormat.Fixed(tr.Baseline.Cost, 5)</td>
+                                <td class="num-col">@LabFormat.Fixed(tr.Baseline.Itae, 5)</td>
+                                <td class="num-col">@LabFormat.Fixed(tr.Baseline.SpectralRadius, 5)</td>
+                                <td class="num-col">@FormatMarginDb(tr.Baseline.MinGainMarginDb)</td>
+                                <td class="num-col">@FormatMarginDeg(tr.Baseline.MinPhaseMarginDeg)</td>
+                                <td class="num-col">[@string.Join("; ", tr.Baseline.Kp.Select(v => LabFormat.Fixed(v, 2)))]</td>
+                                <td class="num-col">[@string.Join("; ", tr.Baseline.Kd.Select(v => LabFormat.Fixed(v, 3)))]</td>
+                            </tr>
+                            <tr class="row-selected">
+                                <td><strong>En İyi (#@tr.Best.Index)</strong></td>
+                                <td class="num-col" id="tuner-best-cost">@LabFormat.Fixed(tr.Best.Cost, 5)</td>
+                                <td class="num-col">@LabFormat.Fixed(tr.Best.Itae, 5)</td>
+                                <td class="num-col">@LabFormat.Fixed(tr.Best.SpectralRadius, 5)</td>
+                                <td class="num-col">@FormatMarginDb(tr.Best.MinGainMarginDb)</td>
+                                <td class="num-col">@FormatMarginDeg(tr.Best.MinPhaseMarginDeg)</td>
+                                <td class="num-col">[@string.Join("; ", tr.Best.Kp.Select(v => LabFormat.Fixed(v, 2)))]</td>
+                                <td class="num-col">[@string.Join("; ", tr.Best.Kd.Select(v => LabFormat.Fixed(v, 3)))]</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    </div>
+</div>
+
+@code {
+    private static readonly double[] StepSizes = [0.003, 0.01, 0.1, 0.5];
+    private static readonly string[] TrackColors =
+    [
+        "#2563eb", "#dc2626", "#16a34a", "#d97706",
+        "#7c3aed", "#0891b2", "#db2777", "#4f46e5",
+        "#0d9488", "#ea580c", "#65a30d", "#9333ea"
+    ];
+
+    private readonly double[] _analysisQ = [0, -0.4, -0.3, 1.1];
+    private readonly string?[] _poseErrors = new string?[4];
+    private string? _poseValidationMessage;
+    private string? _statusBanner;
+
+    // Performance metrics
+    private bool _showPerfOverlay;
+    private double _lastTotalComputeMs;
+    private double _lastPolesBodeMs;
+    private double _lastRootLocusMs;
+    private double _lastStepMs;
+    private double _lastLqrMs;
+    private double _lastRenderMs;
+    private bool _measuringRender;
+    private long _renderStartTimestamp;
+
+    // Debounce CTS
+    private CancellationTokenSource? _debounceCts;
+
+    // Panel 1: Poles
+    private PoleSet? _poles;
+    private PlotSpec? _polePlotSpec;
+
+    // Panel 2: Root Locus
+    private LocusGain _locusGain = LocusGain.Scale;
+    private int _locusJoint;
+    private double _locusNominalValue = 1.0;
+    private bool _locusZoomUnitCircle = true;
+    private RootLocusResult? _rootLocus;
+    private PlotSpec? _rootLocusPlotSpec;
+
+    // Panel 3: Bode
+    private int _bodeJoint;
+    private IReadOnlyList<LoopResponse>? _bodeAll;
+    private PlotSpec? _bodeMagPlotSpec;
+    private PlotSpec? _bodePhasePlotSpec;
+
+    // Panel 4: Step response comparison
+    private int _stepJoint;
+    private double _stepSizeRad = 0.01;
+    private bool _stepAllJoints = true;
+    private double _stepRelativeDiffPercent;
+    private double _stepMaxAbsDiffRad;
+    private double _stepAllJointsWorstPercent;
+    private bool _stepClamped;
+    private string? _stepFaultMessage;
+    private PlotSpec? _stepComparePlotSpec;
+
+    // Panel 5: LQR
+    private readonly double[] _lqrPosWeights = [100.0, 100.0, 100.0, 100.0];
+    private readonly double[] _lqrVelWeights = [1.0, 1.0, 1.0, 1.0];
+    private readonly double[] _lqrInputWeights = [1.0, 1.0, 1.0, 1.0];
+    private LqrResult? _lqrResult;
+    private PlotSpec? _lqrPlotSpec;
+
+    // Panel 6: GainTuner
+    private readonly HashSet<string> _selectedTunerScenarios = new(StringComparer.Ordinal);
+    private TuningSensorMode _tunerSensorMode = TuningSensorMode.PerfectAndEncoder;
+    private TuningCostAggregation _tunerAggregation = TuningCostAggregation.Sum;
+    private double _tunerMinGmDb = 6.0;
+    private double _tunerMinPmDeg = 40.0;
+    private int _tunerMaxEvaluations = 12;
+    private bool _tunerRunning;
+    private CancellationTokenSource? _tunerCts;
+    private GainTunerProgress? _tunerProgress;
+    private GainTunerResult? _tunerResult;
+    private PlotSpec? _tunerPlotSpec;
+
+    private bool HasIntegral =>
+        _state.ControlMethod == ControlMethod.PID || (_state.ControlMethod == ControlMethod.CT && _state.IntegralEnabled);
+
+    private LoopResponse? SelectedBode =>
+        _bodeAll is not null && _bodeJoint >= 0 && _bodeJoint < _bodeAll.Count ? _bodeAll[_bodeJoint] : null;
+
+    private string ParamSymbol => _locusGain switch
+    {
+        LocusGain.Scale => "k",
+        LocusGain.Kp => $"Kp,{_locusJoint + 1}",
+        LocusGain.Kd => $"Kd,{_locusJoint + 1}",
+        LocusGain.Ki => $"Ki,{_locusJoint + 1}",
+        _ => "k"
+    };
+
+    protected override void OnInitialized()
+    {
+        Array.Copy(_state.StartQ, _analysisQ, 4);
+        var defaultScen = !string.IsNullOrEmpty(_state.SelectedLibraryName)
+            ? _state.SelectedLibraryName
+            : ScenarioLibrary.All[0].Name;
+        _selectedTunerScenarios.Add(defaultScen);
+
+        if (!_state.IsSimulationRunning)
+        {
+            ComputeAllPanels();
+        }
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (_measuringRender)
+        {
+            _lastRenderMs = Stopwatch.GetElapsedTime(_renderStartTimestamp).TotalMilliseconds;
+            _measuringRender = false;
+            if (_showPerfOverlay)
+            {
+                StateHasChanged();
+            }
+        }
+    }
+
+    private void TogglePerfOverlay()
+    {
+        _showPerfOverlay = !_showPerfOverlay;
+    }
+
+    private void BeginRenderMeasurement()
+    {
+        _measuringRender = true;
+        _renderStartTimestamp = Stopwatch.GetTimestamp();
+    }
+
+    private void OnScenarioSelected(ChangeEventArgs e)
+    {
+        var name = e.Value?.ToString();
+        var match = ScenarioLibrary.All.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.Ordinal));
+        if (match is not null)
+        {
+            _state.LoadScenario(match, recomputeStabilityNow: true);
+            Array.Copy(_state.StartQ, _analysisQ, 4);
+            _selectedTunerScenarios.Clear();
+            _selectedTunerScenarios.Add(match.Name);
+            _statusBanner = null;
+            ComputeImmediate();
+        }
+    }
+
+    private void OnControllerChanged(ChangeEventArgs e)
+    {
+        var key = e.Value?.ToString();
+        if (!string.IsNullOrEmpty(key))
+        {
+            _state.SetControllerByKey(key, loadDefaultGains: true);
+            _state.RecomputeStability();
+            if (_locusGain == LocusGain.Ki && !HasIntegral)
+            {
+                _locusGain = LocusGain.Scale;
+            }
+            _statusBanner = null;
+            ScheduleDebouncedCompute();
+        }
+    }
+
+    private void OnPoseChanged(int index, string? raw)
+    {
+        if (LabFormat.TryParseInvariant(raw, out var val))
+        {
+            _analysisQ[index] = val;
+        }
+        _statusBanner = null;
+        if (ValidateAnalysisPose())
+        {
+            ScheduleDebouncedCompute();
+        }
+    }
+
+    private void ResetPoseToStart()
+    {
+        Array.Copy(_state.StartQ, _analysisQ, 4);
+        _statusBanner = null;
+        if (ValidateAnalysisPose())
+        {
+            ComputeImmediate();
+        }
+    }
+
+    private bool ValidateAnalysisPose()
+    {
+        Array.Clear(_poseErrors);
+        _poseValidationMessage = null;
+        var model = ArmModel.OpenManipulatorX();
+        for (var i = 0; i < 4; i++)
+        {
+            var j = model.Joints[i];
+            if (!double.IsFinite(_analysisQ[i]) || !j.IsWithinLimits(_analysisQ[i]))
+            {
+                _poseErrors[i] = $"q{i + 1} [{LabFormat.Fixed(j.LowerLimit, 2)}, {LabFormat.Fixed(j.UpperLimit, 2)}] rad aralığında olmalıdır.";
+            }
+        }
+        var firstErr = _poseErrors.FirstOrDefault(x => x is not null);
+        if (firstErr is not null)
+        {
+            _poseValidationMessage = firstErr;
+            return false;
+        }
+
+        var tool = ForwardKinematics.ClosedForm(_analysisQ).Position;
+        if (tool.Z < 0)
+        {
+            _poseValidationMessage = $"Analiz pozunda uç nokta (z = {LabFormat.Fixed(tool.Z * 1000, 1)} mm) zeminin (0 mm) altındadır.";
+            return false;
+        }
+        return true;
+    }
+
+    private void OnLocusGainChanged(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<LocusGain>(e.Value?.ToString(), out var g))
+        {
+            _locusGain = g;
+            ScheduleDebouncedCompute();
+        }
+    }
+
+    private void OnLocusJointChanged(ChangeEventArgs e)
+    {
+        if (LabFormat.TryParseIntInvariant(e.Value?.ToString(), out var j))
+        {
+            _locusJoint = Math.Clamp(j, 0, 3);
+            ScheduleDebouncedCompute();
+        }
+    }
+
+    private void SelectBodeJoint(int jointIndex)
+    {
+        _bodeJoint = Math.Clamp(jointIndex, 0, 3);
+        BeginRenderMeasurement();
+        BuildBodePlotSpecs();
+    }
+
+    private void OnStepJointChanged(ChangeEventArgs e)
+    {
+        if (LabFormat.TryParseIntInvariant(e.Value?.ToString(), out var j))
+        {
+            _stepJoint = Math.Clamp(j, 0, 3);
+            ScheduleDebouncedCompute();
+        }
+    }
+
+    private void SelectStepSize(double stepRad)
+    {
+        _stepSizeRad = stepRad;
+        ScheduleDebouncedCompute();
+    }
+
+    private void OnStepAllJointsChanged(ChangeEventArgs e)
+    {
+        _stepAllJoints = e.Value is true;
+        ScheduleDebouncedCompute();
+    }
+
+    private void OnLqrWeightChanged(double[] array, int index, string? raw)
+    {
+        if (LabFormat.TryParseInvariant(raw, out var val) && val > 0 && double.IsFinite(val))
+        {
+            array[index] = val;
+            ScheduleDebouncedCompute();
+        }
+    }
+
+    private void ScheduleDebouncedCompute()
+    {
+        CancelDebounce();
+        if (_state.IsSimulationRunning)
+        {
+            return;
+        }
+        _debounceCts = new CancellationTokenSource();
+        var token = _debounceCts.Token;
+        _ = RunDebouncedComputeAsync(token);
+    }
+
+    private async Task RunDebouncedComputeAsync(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(300, token);
+            if (token.IsCancellationRequested || _state.IsSimulationRunning)
+            {
+                return;
+            }
+            ComputeAllPanels();
+            StateHasChanged();
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private void ComputeImmediate()
+    {
+        CancelDebounce();
+        if (_state.IsSimulationRunning)
+        {
+            return;
+        }
+        ComputeAllPanels();
+    }
+
+    private void ComputeAllPanels()
+    {
+        if (_state.IsSimulationRunning || !ValidateAnalysisPose())
+        {
+            return;
+        }
+
+        var totalStart = Stopwatch.GetTimestamp();
+        BeginRenderMeasurement();
+
+        var arm = ArmModel.OpenManipulatorX();
+        var planet = _state.GetTruePlanet();
+        var payload = _state.GetInitialPlantPayloadKg();
+        var ts = double.IsFinite(_state.SamplePeriodSeconds) && _state.SamplePeriodSeconds > 0
+            ? _state.SamplePeriodSeconds
+            : ControlLoop.DefaultSamplePeriod;
+        var controller = _state.BuildLinearisableController();
+
+        // 1 & 3. SampledLoopModel, ClosedLoopPoles, LoopFrequencyResponse
+        var sw1 = Stopwatch.GetTimestamp();
+        var sampledModel = SampledLoopModel.ForArm(arm, planet, payload, _analysisQ, controller, ts);
+        _poles = LinearAnalysis.ClosedLoopPoles(sampledModel);
+        BuildPolePlotSpec(_poles);
+
+        _bodeAll = LoopFrequencyResponse.ComputeAll(sampledModel);
+        BuildBodePlotSpecs();
+        _lastPolesBodeMs = Stopwatch.GetElapsedTime(sw1).TotalMilliseconds;
+
+        // 2. RootLocus
+        var sw2 = Stopwatch.GetTimestamp();
+        ComputeRootLocusPanel(arm, planet, payload, controller, ts);
+        _lastRootLocusMs = Stopwatch.GetElapsedTime(sw2).TotalMilliseconds;
+
+        // 4. LinearStepResponse vs Nonlinear simulation
+        var sw3 = Stopwatch.GetTimestamp();
+        ComputeStepComparisonPanel(arm, planet, payload, sampledModel, ts);
+        _lastStepMs = Stopwatch.GetElapsedTime(sw3).TotalMilliseconds;
+
+        // 5. DiscreteLqr
+        var sw4 = Stopwatch.GetTimestamp();
+        ComputeLqrPanel(arm, planet, payload, ts);
+        _lastLqrMs = Stopwatch.GetElapsedTime(sw4).TotalMilliseconds;
+
+        _lastTotalComputeMs = Stopwatch.GetElapsedTime(totalStart).TotalMilliseconds;
+    }
+
+    private void BuildPolePlotSpec(PoleSet poles)
+    {
+        var stableX = new List<double>();
+        var stableY = new List<double>();
+        var unstableX = new List<double>();
+        var unstableY = new List<double>();
+
+        foreach (var p in poles.Poles)
+        {
+            if (p.Modulus < 1.0)
+            {
+                stableX.Add(p.Z.Real);
+                stableY.Add(p.Z.Imaginary);
+            }
+            else
+            {
+                unstableX.Add(p.Z.Real);
+                unstableY.Add(p.Z.Imaginary);
+            }
+        }
+
+        var series = new List<PlotSeries>();
+        if (stableX.Count > 0)
+        {
+            series.Add(new PlotSeries("Kararlı kutuplar (|z| < 1)", "#15803d", stableX.ToArray(), stableY.ToArray())
+            {
+                PointsOnly = true
+            });
+        }
+        if (unstableX.Count > 0)
+        {
+            series.Add(new PlotSeries("Kararsız kutuplar (|z| ≥ 1)", "#dc2626", unstableX.ToArray(), unstableY.ToArray())
+            {
+                PointsOnly = true
+            });
+        }
+
+        _polePlotSpec = new PlotSpec
+        {
+            Title = $"Kapalı Çevrim z-Kutupları ({_state.ControllerKey}, Ts = {LabFormat.Input(_state.SamplePeriodSeconds * 1000)} ms)",
+            X = new PlotAxis("Re(z)"),
+            Y = new PlotAxis("Im(z)"),
+            EqualAspect = true,
+            UnitCircle = true,
+            Series = series,
+            HLines = [new PlotHLine(0, "", "#94a3b8")],
+            Markers = [new PlotMarker(0, "", "#94a3b8")]
+        };
+    }
+
+    private void ComputeRootLocusPanel(
+        ArmModel arm,
+        Planet planet,
+        double payload,
+        ILinearisableController controller,
+        double ts)
+    {
+        if (_locusGain == LocusGain.Ki && !HasIntegral)
+        {
+            _locusGain = LocusGain.Scale;
+        }
+
+        var param = _locusGain == LocusGain.Scale
+            ? LocusParameter.ScaleAll
+            : new LocusParameter(_locusGain, _locusJoint);
+
+        _locusNominalValue = _locusGain switch
+        {
+            LocusGain.Scale => 1.0,
+            LocusGain.Kp => _state.Kp[_locusJoint],
+            LocusGain.Kd => _state.Kd[_locusJoint],
+            LocusGain.Ki => _state.Ki[_locusJoint],
+            _ => 1.0
+        };
+
+        var baseVal = _locusNominalValue > 1e-6 ? _locusNominalValue : 1.0;
+        var minVal = 0.05 * baseVal;
+        var maxVal = 50.0 * baseVal;
+
+        _rootLocus = RootLocus.Sweep(arm, planet, payload, _analysisQ, controller, ts, param, minVal, maxVal);
+
+        var series = new List<PlotSeries>();
+        for (var pIdx = 0; pIdx < _rootLocus.Tracks.Count; pIdx++)
+        {
+            var track = _rootLocus.Tracks[pIdx];
+            var xs = new double[track.Count];
+            var ys = new double[track.Count];
+            for (var k = 0; k < track.Count; k++)
+            {
+                var z = track[k];
+                xs[k] = z.Real;
+                ys[k] = z.Imaginary;
+            }
+            series.Add(new PlotSeries(
+                $"Kutup {pIdx + 1}",
+                TrackColors[pIdx % TrackColors.Length],
+                xs,
+                ys)
+            {
+                Width = 1.5,
+                HideInLegend = pIdx >= 4
+            });
+        }
+
+        if (_poles is not null)
+        {
+            series.Add(new PlotSeries(
+                $"Mevcut ({ParamSymbol} = {LabFormat.Input(_locusNominalValue, "G4")})",
+                "#0f172a",
+                _poles.Poles.Select(p => p.Z.Real).ToArray(),
+                _poles.Poles.Select(p => p.Z.Imaginary).ToArray())
+            {
+                PointsOnly = true
+            });
+        }
+
+        if (_rootLocus.Crossings.Count > 0 && _rootLocus.Values.Count > 0)
+        {
+            var cx = new List<double>();
+            var cy = new List<double>();
+            foreach (var c in _rootLocus.Crossings)
+            {
+                // Find the grid index closest to c.Value and mark the pole(s) near |z| = 1
+                var bestIdx = 0;
+                var bestDist = double.PositiveInfinity;
+                for (var k = 0; k < _rootLocus.Values.Count; k++)
+                {
+                    var d = Math.Abs(_rootLocus.Values[k] - c.Value);
+                    if (d < bestDist) { bestDist = d; bestIdx = k; }
+                }
+                foreach (var t in _rootLocus.Tracks)
+                {
+                    var z = t[bestIdx];
+                    if (Math.Abs(z.Magnitude - 1.0) < 0.08)
+                    {
+                        var norm = z.Magnitude > 1e-9 ? z / z.Magnitude : z;
+                        cx.Add(norm.Real);
+                        cy.Add(norm.Imaginary);
+                    }
+                }
+            }
+            if (cx.Count > 0)
+            {
+                series.Add(new PlotSeries(
+                    "Birim çember geçişi (|z| = 1)",
+                    "#dc2626",
+                    cx.ToArray(),
+                    cy.ToArray())
+                {
+                    PointsOnly = true
+                });
+            }
+        }
+
+        _rootLocusPlotSpec = new PlotSpec
+        {
+            Title = $"Kök Yer Eğrisi ({ParamSymbol} ∈ [{LabFormat.Input(minVal, "G3")}, {LabFormat.Input(maxVal, "G4")}])",
+            X = _locusZoomUnitCircle ? new PlotAxis("Re(z)", Min: -1.6, Max: 1.25) : new PlotAxis("Re(z)"),
+            Y = _locusZoomUnitCircle ? new PlotAxis("Im(z)", Min: -1.25, Max: 1.25) : new PlotAxis("Im(z)"),
+            EqualAspect = true,
+            UnitCircle = true,
+            Series = series,
+            HLines = [new PlotHLine(0, "", "#94a3b8")],
+            Markers = [new PlotMarker(0, "", "#94a3b8")]
+        };
+    }
+
+    private void OnLocusZoomChanged(ChangeEventArgs e)
+    {
+        _locusZoomUnitCircle = e.Value is true;
+        ComputeImmediate();
+    }
+
+    private void BuildBodePlotSpecs()
+    {
+        var bode = SelectedBode;
+        if (bode is null)
+        {
+            _bodeMagPlotSpec = null;
+            _bodePhasePlotSpec = null;
+            return;
+        }
+
+        var freqs = bode.Frequencies.ToArray();
+        var mags = bode.MagnitudeDb.ToArray();
+        var phases = bode.PhaseDeg.ToArray();
+
+        var markers = new List<PlotMarker>();
+        if (double.IsFinite(bode.GainCrossoverFrequency) && bode.GainCrossoverFrequency > 0)
+        {
+            markers.Add(new PlotMarker(
+                bode.GainCrossoverFrequency,
+                $"ωgc = {LabFormat.Fixed(bode.GainCrossoverFrequency, 1)} rad/s (PM = {LabFormat.Fixed(bode.PhaseMarginDeg, 1)}°)",
+                "#15803d"));
+        }
+        if (double.IsFinite(bode.PhaseCrossoverFrequency) && bode.PhaseCrossoverFrequency > 0)
+        {
+            markers.Add(new PlotMarker(
+                bode.PhaseCrossoverFrequency,
+                $"ωpc = {LabFormat.Fixed(bode.PhaseCrossoverFrequency, 1)} rad/s (GM = {LabFormat.Fixed(bode.GainMarginDb, 2)} dB)",
+                "#dc2626"));
+        }
+
+        var magSeries = new List<PlotSeries>
+        {
+            new($"|L{_bodeJoint + 1}(e^(jωTs))| (dB)", "#2563eb", freqs, mags) { Width = 1.8 }
+        };
+        if (double.IsFinite(bode.PhaseCrossoverFrequency) && bode.PhaseCrossoverFrequency > 0 && double.IsFinite(bode.GainMarginDb))
+        {
+            magSeries.Add(new PlotSeries(
+                $"GM noktası (−{LabFormat.Fixed(bode.GainMarginDb, 2)} dB)",
+                "#dc2626",
+                [bode.PhaseCrossoverFrequency],
+                [-bode.GainMarginDb])
+            {
+                PointsOnly = true
+            });
+        }
+
+        _bodeMagPlotSpec = new PlotSpec
+        {
+            Title = $"Eklem {_bodeJoint + 1} Açık Çevrim Genlik Yanıtı (dB)",
+            X = new PlotAxis("Frekans ω (rad/s)", AxisScale.Log),
+            Y = new PlotAxis("Genlik (dB)"),
+            Series = magSeries,
+            HLines = [new PlotHLine(0.0, "0 dB", "#64748b")],
+            Markers = markers
+        };
+
+        var phaseSeries = new List<PlotSeries>
+        {
+            new($"∠L{_bodeJoint + 1}(e^(jωTs)) (°)", "#7c3aed", freqs, phases) { Width = 1.8 }
+        };
+        if (double.IsFinite(bode.GainCrossoverFrequency) && bode.GainCrossoverFrequency > 0 && double.IsFinite(bode.PhaseMarginDeg))
+        {
+            phaseSeries.Add(new PlotSeries(
+                $"PM noktası ({LabFormat.Fixed(-180.0 + bode.PhaseMarginDeg, 1)}°)",
+                "#15803d",
+                [bode.GainCrossoverFrequency],
+                [-180.0 + bode.PhaseMarginDeg])
+            {
+                PointsOnly = true
+            });
+        }
+
+        _bodePhasePlotSpec = new PlotSpec
+        {
+            Title = $"Eklem {_bodeJoint + 1} Açık Çevrim Faz Yanıtı (derece)",
+            X = new PlotAxis("Frekans ω (rad/s)", AxisScale.Log),
+            Y = new PlotAxis("Faz (°)"),
+            Series = phaseSeries,
+            HLines = [new PlotHLine(-180.0, "−180°", "#dc2626")],
+            Markers = markers
+        };
+    }
+
+    private void ComputeStepComparisonPanel(
+        ArmModel arm,
+        Planet planet,
+        double payload,
+        SampledLoopModel sampledModel,
+        double ts)
+    {
+        const double duration = 2.0;
+        var stepVec = new double[4];
+        if (_stepAllJoints)
+        {
+            for (var i = 0; i < 4; i++) stepVec[i] = _stepSizeRad;
+        }
+        else
+        {
+            stepVec[_stepJoint] = _stepSizeRad;
+        }
+
+        var linear = LinearStepResponse.Compute(sampledModel, _analysisQ, stepVec, duration);
+
+        // Run nonlinear control loop from rest at _analysisQ with ConstantReference(_analysisQ + stepVec)
+        var plant = new ArmPlant(arm, planet);
+        plant.SetPayload(payload);
+        var x0 = new double[8];
+        Array.Copy(_analysisQ, x0, 4);
+        var h = double.IsFinite(_state.StepSeconds) && _state.StepSeconds >= Simulation.MinStep && _state.StepSeconds <= Simulation.MaxStep
+            ? _state.StepSeconds
+            : Simulation.DefaultStep;
+        // Ensure ts is an integer multiple of h for ControlLoop
+        var substeps = Math.Max(1, (int)Math.Round(ts / h));
+        var effectiveH = ts / substeps;
+
+        var sim = new Simulation(plant, new Rk4Solver(8), x0, FaultChecks.All);
+        var nlController = (IController)_state.BuildLinearisableController();
+        var qRef = new double[4];
+        for (var i = 0; i < 4; i++) qRef[i] = _analysisQ[i] + stepVec[i];
+        var loop = new ControlLoop(sim, nlController, new PerfectSensor(4), new ConstantReference(qRef), step: effectiveH, samplePeriod: ts);
+
+        var n = linear.SampleCount;
+        var times = new double[n];
+        var linPos = new double[n];
+        var nlPos = new double[n];
+        var refPos = new double[n];
+
+        var worstSelected = 0.0;
+        var worstAll = 0.0;
+        var clamped = false;
+        string? faultMsg = null;
+
+        for (var s = 0; s < n; s++)
+        {
+            var t = linear.Time(s);
+            times[s] = t;
+            linPos[s] = linear.Position(s, _stepJoint);
+            nlPos[s] = sim.Q[_stepJoint];
+            refPos[s] = qRef[_stepJoint];
+
+            var errSel = Math.Abs(sim.Q[_stepJoint] - linear.Position(s, _stepJoint));
+            if (errSel > worstSelected) worstSelected = errSel;
+
+            for (var i = 0; i < 4; i++)
+            {
+                var err = Math.Abs(sim.Q[i] - linear.Position(s, i));
+                if (err > worstAll) worstAll = err;
+            }
+
+            if (s == n - 1) break;
+            if (!loop.AdvanceSample())
+            {
+                var fault = sim.Fault;
+                faultMsg = fault is not null
+                    ? $"Doğrusal olmayan simülasyon t = {LabFormat.Fixed(fault.Time, 3)} s anında durdu ({fault.Reason})."
+                    : "Doğrusal olmayan simülasyon durdu.";
+                for (var rem = s + 1; rem < n; rem++)
+                {
+                    times[rem] = linear.Time(rem);
+                    linPos[rem] = linear.Position(rem, _stepJoint);
+                    nlPos[rem] = double.NaN;
+                    refPos[rem] = qRef[_stepJoint];
+                }
+                break;
+            }
+            for (var i = 0; i < 4; i++) clamped |= loop.Controller.Clamped[i];
+        }
+
+        var denom = Math.Max(1e-9, Math.Abs(_stepSizeRad));
+        _stepMaxAbsDiffRad = worstSelected;
+        _stepRelativeDiffPercent = 100.0 * worstSelected / denom;
+        _stepAllJointsWorstPercent = 100.0 * worstAll / denom;
+        _stepClamped = clamped;
+        _stepFaultMessage = faultMsg;
+
+        _stepComparePlotSpec = new PlotSpec
+        {
+            Title = $"Eklem {_stepJoint + 1} Basamak Yanıtı (δ = {LabFormat.Input(_stepSizeRad)} rad, {(_stepAllJoints ? "4 eklem ortak" : "tek eklem")})",
+            X = new PlotAxis("Zaman t (s)"),
+            Y = new PlotAxis($"q{_stepJoint + 1} (rad)"),
+            Series =
+            [
+                new PlotSeries("Basamak referansı (q₀ + δ)", "#64748b", times, refPos) { Dashed = true, Width = 1.3 },
+                new PlotSeries("Doğrusal model (LinearStepResponse)", "#2563eb", times, linPos) { Width = 1.9 },
+                new PlotSeries("Doğrusal olmayan gerçek yanıt (RK4)", "#dc2626", times, nlPos) { Dashed = true, Width = 1.9 }
+            ]
+        };
+    }
+
+    private void ComputeLqrPanel(ArmModel arm, Planet planet, double payload, double ts)
+    {
+        _lqrResult = DiscreteLqr.ForArm(
+            arm,
+            planet,
+            payload,
+            _analysisQ,
+            ts,
+            _lqrPosWeights,
+            _lqrVelWeights,
+            _lqrInputWeights);
+
+        var fullX = _lqrResult.Poles.Poles.Select(p => p.Z.Real).ToArray();
+        var fullY = _lqrResult.Poles.Poles.Select(p => p.Z.Imaginary).ToArray();
+
+        var series = new List<PlotSeries>
+        {
+            new($"Tam durum LQR kutupları (ρ = {LabFormat.Fixed(_lqrResult.Poles.SpectralRadius, 4)})", "#2563eb", fullX, fullY)
+            {
+                PointsOnly = true
+            }
+        };
+
+        if (_lqrResult.Projection is { } proj)
+        {
+            var projX = proj.Poles.Poles.Select(p => p.Z.Real).ToArray();
+            var projY = proj.Poles.Poles.Select(p => p.Z.Imaginary).ToArray();
+            series.Add(new PlotSeries(
+                $"Köşegen izdüşüm PD kutupları (ρ = {LabFormat.Fixed(proj.SpectralRadius, 4)})",
+                "#ea580c",
+                projX,
+                projY)
+            {
+                PointsOnly = true
+            });
+        }
+
+        _lqrPlotSpec = new PlotSpec
+        {
+            Title = "Tam Durum LQR ve Köşegen İzdüşüm z-Kutupları",
+            X = new PlotAxis("Re(z)"),
+            Y = new PlotAxis("Im(z)"),
+            EqualAspect = true,
+            UnitCircle = true,
+            Series = series,
+            HLines = [new PlotHLine(0, "", "#94a3b8")],
+            Markers = [new PlotMarker(0, "", "#94a3b8")]
+        };
+    }
+
+    private void ApplyLqrProjectionGains()
+    {
+        if (_lqrResult?.Projection is not { } proj)
+        {
+            return;
+        }
+        for (var i = 0; i < 4; i++)
+        {
+            _state.Kp[i] = Math.Round(proj.Kp[i], 4);
+            _state.Kd[i] = Math.Round(proj.Kd[i], 4);
+        }
+        _state.RecomputeValidation();
+        _state.RecomputeStability();
+        _statusBanner = $"Köşegen LQR kazançları ({_state.ControllerKey}) kuruluma uygulandı: Kp = [{string.Join("; ", _state.Kp.Select(v => LabFormat.Input(v, "G5")))}], Kd = [{string.Join("; ", _state.Kd.Select(v => LabFormat.Input(v, "G5")))}].";
+        ComputeImmediate();
+    }
+
+    private void ToggleTunerScenario(string scenarioName, bool isChecked)
+    {
+        if (isChecked)
+        {
+            _selectedTunerScenarios.Add(scenarioName);
+        }
+        else if (_selectedTunerScenarios.Count > 1)
+        {
+            _selectedTunerScenarios.Remove(scenarioName);
+        }
+    }
+
+    private async Task StartTunerAsync()
+    {
+        if (_tunerRunning || _state.IsSimulationRunning)
+        {
+            return;
+        }
+
+        CancelTuner();
+        _tunerRunning = true;
+        _tunerProgress = null;
+        _tunerResult = null;
+        _tunerPlotSpec = null;
+        _statusBanner = null;
+        _tunerCts = new CancellationTokenSource();
+        var token = _tunerCts.Token;
+
+        try
+        {
+            // Build scenario list: selected library scenarios, with the primary scenario using the current LabState controller and gains
+            var selectedList = new List<Scenario>();
+            var currentScenario = _state.BuildScenario();
+
+            foreach (var libScen in ScenarioLibrary.All)
+            {
+                if (_selectedTunerScenarios.Contains(libScen.Name))
+                {
+                    var adapted = libScen with
+                    {
+                        Controller = currentScenario.Controller
+                    };
+                    selectedList.Add(adapted);
+                }
+            }
+            if (selectedList.Count == 0)
+            {
+                selectedList.Add(currentScenario);
+            }
+
+            var options = new GainTunerOptions
+            {
+                MaxEvaluations = Math.Clamp(_tunerMaxEvaluations, 2, 120),
+                Sensor = _tunerSensorMode,
+                CostAggregation = _tunerAggregation,
+                GainMarginLimitDb = _tunerMinGmDb,
+                PhaseMarginLimitDeg = _tunerMinPmDeg,
+                Mode = TuningMode.PerJoint
+            };
+
+            var progressHistory = new List<GainTunerEvaluation>();
+
+            var result = await AsyncGainTuner.TuneAsync(
+                selectedList,
+                options,
+                prog =>
+                {
+                    _tunerProgress = prog;
+                    progressHistory.Add(prog.Latest);
+                    BuildTunerPlotSpec(progressHistory);
+                    BeginRenderMeasurement();
+                    InvokeAsync(StateHasChanged);
+                },
+                token);
+
+            _tunerResult = result;
+            BuildTunerPlotSpec(result.History);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _statusBanner = $"Otomatik ayar hatası: {ex.Message}";
+        }
+        finally
+        {
+            _tunerRunning = false;
+            BeginRenderMeasurement();
+            StateHasChanged();
+        }
+    }
+
+    private void CancelTuner()
+    {
+        if (_tunerCts is not null)
+        {
+            _tunerCts.Cancel();
+            _tunerCts.Dispose();
+            _tunerCts = null;
+        }
+    }
+
+    private void BuildTunerPlotSpec(IReadOnlyList<GainTunerEvaluation> history)
+    {
+        if (history.Count == 0)
+        {
+            _tunerPlotSpec = null;
+            return;
+        }
+        var xs = new double[history.Count];
+        var bestYs = new double[history.Count];
+        var bestSoFar = double.PositiveInfinity;
+        for (var i = 0; i < history.Count; i++)
+        {
+            xs[i] = history[i].Index;
+            var c = history[i].Cost;
+            if (c < bestSoFar) bestSoFar = c;
+            bestYs[i] = bestSoFar;
+        }
+
+        _tunerPlotSpec = new PlotSpec
+        {
+            Title = "Nelder–Mead En İyi Maliyet Geçmişi",
+            X = new PlotAxis("Değerlendirme #"),
+            Y = new PlotAxis("En iyi maliyet"),
+            Series =
+            [
+                new PlotSeries("En iyi maliyet", "#16a34a", xs, bestYs) { Width = 2.0 }
+            ]
+        };
+    }
+
+    private void ApplyTunedGains()
+    {
+        if (_tunerResult is not { } tr)
+        {
+            return;
+        }
+        for (var i = 0; i < 4; i++)
+        {
+            _state.Kp[i] = Math.Round(tr.Best.Kp[i], 4);
+            _state.Kd[i] = Math.Round(tr.Best.Kd[i], 4);
+        }
+        _state.RecomputeValidation();
+        _state.RecomputeStability();
+        _statusBanner = $"Otomatik ayar kazançları (#{tr.Best.Index}) kuruluma uygulandı: Kp = [{string.Join("; ", _state.Kp.Select(v => LabFormat.Input(v, "G5")))}], Kd = [{string.Join("; ", _state.Kd.Select(v => LabFormat.Input(v, "G5")))}].";
+        ComputeImmediate();
+    }
+
+    private static string FormatComplex(Complex c, int decimals)
+    {
+        var re = LabFormat.Fixed(c.Real, decimals);
+        if (Math.Abs(c.Imaginary) < 1e-12)
+        {
+            return re;
+        }
+        var sign = c.Imaginary >= 0 ? "+" : "−";
+        var im = LabFormat.Fixed(Math.Abs(c.Imaginary), decimals);
+        return $"{re} {sign} j{im}";
+    }
+
+    private static string FormatMarginDb(double db) =>
+        double.IsPositiveInfinity(db) ? "∞ dB" : double.IsFinite(db) ? $"{LabFormat.Fixed(db, 2)} dB" : "—";
+
+    private static string FormatMarginDeg(double deg) =>
+        double.IsPositiveInfinity(deg) ? "∞°" : double.IsFinite(deg) ? $"{LabFormat.Fixed(deg, 1)}°" : "—";
+
+    private static string FormatFreq(double w) =>
+        double.IsFinite(w) && w > 0 ? $"{LabFormat.Fixed(w, 2)} rad/s" : "—";
+
+    private void CancelDebounce()
+    {
+        if (_debounceCts is not null)
+        {
+            _debounceCts.Cancel();
+            _debounceCts.Dispose();
+            _debounceCts = null;
+        }
+    }
+
+    public void Dispose()
+    {
+        CancelDebounce();
+        CancelTuner();
+    }
+}
