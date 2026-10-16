@@ -308,3 +308,17 @@ The `dotnet.native.wasm` grows from 2.9 MB to 15.0 MB because it now holds the c
 | CT (after A1c: 1600,1600,1800,1800 / 350) | 0.990779 | 9.15 dB / 69.24° | 9.36 dB / 71.83° | 10.75 dB / 89.68° | 7.19 dB / 62.51° |
 | CT+I (unchanged: 3600 / 360 / 10000) | 0.989816 | 8.91 dB / 67.81° | 9.10 dB / 70.07° | 10.43 dB / 87.69° | 7.43 dB / 46.57° |
 
+---
+
+## D12 – Student-written JavaScript controller ("Kendi kontrolcün", T10b)
+
+**Context.** T10b adds a fifth controller option (`"Kendi kontrolcün (JavaScript)"`) so a student can write `function kontrol(t, q, qd, ref, model)` directly in the browser without rebuilding the .NET WebAssembly app, while keeping `RobotArm.Core` free of any browser/JS dependency.
+
+**Decision.**
+- `JsController` (`src/RobotArm.Web/Models/JsController.cs`) implements Core's `IController` in `RobotArm.Web` and invokes the compiled JS function synchronously at each sample period $T_s$ via `IJSInProcessRuntime`.
+- `model.M(q)`, `model.gravity(q)` and `model.bias(q, qd)` call back into `[JSInvokable]` methods on `JsController` (`ComputeM`, `ComputeGravity`, `ComputeBias`), which evaluate `RecursiveNewtonEuler` (`InertiaMatrix` and `BiasTorque`) on the controller's `ControllerBelief` (never on the true plant). When a `PickPlace` event attaches or releases an object under `PayloadKnowledge.Informed`, `SetPayloadBelief` updates `JsController.Belief` just like built-in controllers.
+- **Safety before the run:** `RobotArmCustomController.dryRunInWorker` (`src/RobotArm.Web/wwwroot/js/custom-controller.js`) runs 2000 calls with representative inputs inside a dedicated Web Worker with a hard 500 ms wall-clock timeout. If the code has a syntax error, throws, returns anything other than 4 finite numbers, or exceeds 500 ms (e.g., `while (true) {}`), the worker is terminated (`worker.terminate()`) and the run is refused with a Turkish message without freezing the UI thread.
+- **Safety during the run:** `invokeKontrol` returns `[u0, u1, u2, u3, okFlag]` (using finite numbers so `System.Text.Json` never fails to deserialize `NaN`), and `JsController.Compute` verifies `okFlag == 1` and `double.IsFinite(u[i])`, clamping finite outputs to $\pm\tau_{\max}$ (`±4.1 N·m`). If any output is non-finite or invalid, `CustomExperimentRunner` stops the run cleanly with `Fault(FaultReason.NonFinite, t, -1, double.NaN)` and the Turkish message `"Kontrolcün sayı olmayan bir değer döndürdü"`. Any call slower than 5 ms records a Turkish warning in `SlowCallWarning`.
+- **Persistence:** `LabState.SerializeScenarioWithCustomController` writes `"customController"` into the exported `.scenario.json`, and `LabState.DeserializeScenarioWithCustomController` extracts and strips `"customController"` before passing the JSON to `ScenarioJson.Deserialize` (preserving Core's `JsonUnmappedMemberHandling.Disallow`).
+- **Verification:** On `"Dünya – boş kol – noktaya git"`, the prefilled PD + gravity law (`CustomControllerExamples.DefaultPdgCode`) produces the exact same 5000-row log as built-in `PDG` (`maxDiffAll = 0.0 <= 1e-9`). All three Turkish-commented example laws (`pdg`, `ct`, `smc`) complete the reach task with `Görev Başarılı` in 482–628 ms in Fast mode.
+

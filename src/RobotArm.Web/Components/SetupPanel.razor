@@ -315,10 +315,11 @@
                 <option value="PDG">PDG (PD + Yerçekimi Telafisi)</option>
                 <option value="CT">CT (Hesaplanmış Tork)</option>
                 <option value="CT+I">CT+I (İntegralli Hesaplanmış Tork)</option>
+                <option value="Custom">Kendi kontrolcün (JavaScript)</option>
             </select>
         </div>
 
-        @if (State.ControlMethod == ControlMethod.CT)
+        @if (!State.UseCustomController && State.ControlMethod == ControlMethod.CT)
         {
             <div class="field-row">
                 <label class="field-label" for="ct-mode-select">CT Model Değerlendirme</label>
@@ -326,6 +327,51 @@
                     <option value="predict">Örneklemeye duyarlı (orta nokta tahmini açık)</option>
                     <option value="textbook">Ders kitabı yasası (tahminsiz, q̄ = q)</option>
                 </select>
+            </div>
+        }
+
+        @if (State.UseCustomController)
+        {
+            <div class="custom-controller-box">
+                <div class="field-row">
+                    <label class="field-label" for="custom-law-preset-select">Örnek Kontrol Yasası</label>
+                    <select id="custom-law-preset-select" class="form-input" value="@State.SelectedCustomExampleKey" @onchange="OnCustomExampleChanged">
+                        @foreach (var ex in CustomControllerExamples.All)
+                        {
+                            <option value="@ex.Key">@ex.Title</option>
+                        }
+                        @if (State.SelectedCustomExampleKey == "custom")
+                        {
+                            <option value="custom">Özel düzenlenmiş kod</option>
+                        }
+                    </select>
+                </div>
+                @{
+                    var selectedEx = CustomControllerExamples.All.FirstOrDefault(item => item.Key == State.SelectedCustomExampleKey);
+                }
+                @if (selectedEx is not null)
+                {
+                    <div class="scenario-desc">@selectedEx.Description</div>
+                }
+                <div class="field-row">
+                    <label class="field-label" for="custom-controller-editor">
+                        JavaScript Kontrol Fonksiyonu <small>(tarayıcıda yerel çalışır; model.M(q), model.gravity(q), model.bias(q, qd) inanç modelinden gelir)</small>
+                    </label>
+                    <textarea id="custom-controller-editor"
+                              class="form-input custom-code-editor"
+                              rows="13"
+                              spellcheck="false"
+                              value="@State.CustomControllerCode"
+                              @oninput="OnCustomCodeChanged"></textarea>
+                </div>
+                @if (!string.IsNullOrEmpty(State.CustomControllerError))
+                {
+                    <div id="custom-controller-error" class="field-error">@State.CustomControllerError</div>
+                }
+                @if (!string.IsNullOrEmpty(State.CustomControllerSlowWarning))
+                {
+                    <div id="custom-controller-warning" class="stability-warning">@State.CustomControllerSlowWarning</div>
+                }
             </div>
         }
 
@@ -627,6 +673,24 @@
     {
         var key = e.Value?.ToString() ?? "PDG";
         State.SetControllerByKey(key, loadDefaultGains: true);
+        await OnStateChanged.InvokeAsync();
+    }
+
+    private async Task OnCustomExampleChanged(ChangeEventArgs e)
+    {
+        var key = e.Value?.ToString() ?? "pdg";
+        State.SelectCustomExample(key);
+        await OnStateChanged.InvokeAsync();
+    }
+
+    private async Task OnCustomCodeChanged(ChangeEventArgs e)
+    {
+        State.CustomControllerCode = e.Value?.ToString() ?? "";
+        var matching = CustomControllerExamples.All.FirstOrDefault(ex =>
+            string.Equals(ex.Code.Trim(), State.CustomControllerCode.Trim(), StringComparison.Ordinal));
+        State.SelectedCustomExampleKey = matching?.Key ?? "custom";
+        State.CustomControllerError = null;
+        State.CustomControllerSlowWarning = null;
         await OnStateChanged.InvokeAsync();
     }
 

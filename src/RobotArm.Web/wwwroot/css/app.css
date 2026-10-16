@@ -1639,3 +1639,32 @@ line.plot-zero {
     border-top: 1px solid var(--border-light);
     text-align: center;
 }
+
+/* ---------- T10b: Kendi kontrolcün (JavaScript editor) ---------- */
+.custom-controller-box {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding: 0.5rem 0.55rem;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-light);
+    border-radius: 5px;
+    margin-bottom: 0.35rem;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.custom-code-editor {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.78rem;
+    line-height: 1.42;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    background: #ffffff;
+    color: #0f172a;
+    padding: 0.45rem 0.55rem;
+    white-space: pre;
+    overflow-x: auto;
+}

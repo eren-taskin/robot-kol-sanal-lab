@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using RobotArm.Core.Control;
 using RobotArm.Core.Dynamics;
 using RobotArm.Core.Kinematics;
@@ -73,6 +75,11 @@ public sealed class LabState
     public ControlMethod ControlMethod { get; set; } = ControlMethod.PDG;
     public bool IntegralEnabled { get; set; }
     public bool PredictHalfSample { get; set; } = true;
+    public bool UseCustomController { get; set; }
+    public string SelectedCustomExampleKey { get; set; } = "pdg";
+    public string CustomControllerCode { get; set; } = CustomControllerExamples.DefaultPdgCode;
+    public string? CustomControllerError { get; set; }
+    public string? CustomControllerSlowWarning { get; set; }
     public double[] Kp { get; } = [6.0, 6.0, 6.0, 2.0];
     public double[] Kd { get; } = [0.3, 0.6, 0.3, 0.05];
     public double[] Ki { get; } = [5.0, 20.0, 20.0, 8.0];
@@ -124,27 +131,45 @@ public sealed class LabState
     }
 
     public string ControllerKey =>
-        ControlMethod == ControlMethod.CT && IntegralEnabled ? "CT+I" : ControlMethod.ToString();
+        UseCustomController
+            ? "Custom"
+            : (ControlMethod == ControlMethod.CT && IntegralEnabled ? "CT+I" : ControlMethod.ToString());
 
     public void SetControllerByKey(string key, bool loadDefaultGains = true)
     {
+        CustomControllerError = null;
+        CustomControllerSlowWarning = null;
         switch (key)
         {
             case "PID":
+                UseCustomController = false;
                 ControlMethod = ControlMethod.PID;
                 IntegralEnabled = false;
                 break;
             case "PDG":
+                UseCustomController = false;
                 ControlMethod = ControlMethod.PDG;
                 IntegralEnabled = false;
                 break;
             case "CT":
+                UseCustomController = false;
                 ControlMethod = ControlMethod.CT;
                 IntegralEnabled = false;
                 break;
             case "CT+I":
+                UseCustomController = false;
                 ControlMethod = ControlMethod.CT;
                 IntegralEnabled = true;
+                break;
+            case "Custom":
+                UseCustomController = true;
+                ControlMethod = ControlMethod.PDG;
+                IntegralEnabled = false;
+                if (string.IsNullOrWhiteSpace(CustomControllerCode))
+                {
+                    CustomControllerCode = CustomControllerExamples.DefaultPdgCode;
+                    SelectedCustomExampleKey = "pdg";
+                }
                 break;
         }
         if (loadDefaultGains)
@@ -152,6 +177,18 @@ public sealed class LabState
             ApplyDefaultGains();
         }
         RecomputeValidation();
+    }
+
+    public void SelectCustomExample(string exampleKey)
+    {
+        var ex = CustomControllerExamples.All.FirstOrDefault(item => item.Key == exampleKey);
+        if (ex is not null)
+        {
+            SelectedCustomExampleKey = ex.Key;
+            CustomControllerCode = ex.Code;
+            CustomControllerError = null;
+            CustomControllerSlowWarning = null;
+        }
     }
 
     public void ApplyDefaultGains()
@@ -165,7 +202,7 @@ public sealed class LabState
                 Ki[i] = Pid.DefaultGains.Ki[i];
             }
         }
-        else if (ControlMethod == ControlMethod.PDG)
+        else if (ControlMethod == ControlMethod.PDG || UseCustomController)
         {
             for (var i = 0; i < 4; i++)
             {
@@ -192,7 +229,7 @@ public sealed class LabState
         }
     }
 
-    public void LoadScenario(Scenario s, bool recomputeStabilityNow = false)
+    public void LoadScenario(Scenario s, bool recomputeStabilityNow = false, string? customControllerCode = null)
     {
         SelectedLibraryName = s.Name;
         Name = s.Name;
@@ -221,6 +258,16 @@ public sealed class LabState
         PulseStart = s.Task.PulseStart;
         PulseDuration = s.Task.PulseDuration;
 
+        UseCustomController = !string.IsNullOrWhiteSpace(customControllerCode);
+        CustomControllerError = null;
+        CustomControllerSlowWarning = null;
+        if (UseCustomController)
+        {
+            CustomControllerCode = customControllerCode!;
+            var matchingPreset = CustomControllerExamples.All.FirstOrDefault(ex =>
+                string.Equals(ex.Code.Trim(), CustomControllerCode.Trim(), StringComparison.Ordinal));
+            SelectedCustomExampleKey = matchingPreset?.Key ?? "custom";
+        }
         ControlMethod = s.Controller.Method;
         IntegralEnabled = s.Controller.IntegralEnabled;
         PredictHalfSample = s.Controller.PredictHalfSample;
@@ -249,6 +296,39 @@ public sealed class LabState
         {
             RecomputeStability();
         }
+    }
+
+    public string SerializeScenarioWithCustomController(Scenario? scenarioOverride = null)
+    {
+        var scenario = scenarioOverride ?? BuildScenario();
+        var baseJson = ScenarioJson.Serialize(scenario);
+        if (!UseCustomController || string.IsNullOrWhiteSpace(CustomControllerCode))
+        {
+            return baseJson;
+        }
+        var root = JsonNode.Parse(baseJson)?.AsObject();
+        if (root is null)
+        {
+            return baseJson;
+        }
+        root["customController"] = CustomControllerCode;
+        return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    public static Scenario DeserializeScenarioWithCustomController(string json, out string? customControllerCode)
+    {
+        customControllerCode = null;
+        var node = JsonNode.Parse(json);
+        if (node is JsonObject obj && obj.TryGetPropertyValue("customController", out var customNode))
+        {
+            if (customNode is not null && customNode.GetValueKind() == JsonValueKind.String)
+            {
+                customControllerCode = customNode.GetValue<string>();
+            }
+            obj.Remove("customController");
+            return ScenarioJson.Deserialize(obj.ToJsonString());
+        }
+        return ScenarioJson.Deserialize(json);
     }
 
     public Scenario BuildScenario()
@@ -817,6 +897,11 @@ public sealed class LabState
 
     public static string TranslateFailureOrFault(RunResult result)
     {
+        if (!string.IsNullOrEmpty(result.FailureReason) && result.FailureReason.Contains("Kontrolcün", StringComparison.Ordinal))
+        {
+            return result.FailureReason;
+        }
+
         if (result.Fault is Fault fault)
         {
             var model = ArmModel.OpenManipulatorX();

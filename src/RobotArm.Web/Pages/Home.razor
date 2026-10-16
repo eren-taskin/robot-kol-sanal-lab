@@ -37,7 +37,7 @@
                      Perf="CurrentPerfMetrics"
                      OnStart="StartRunAsync"
                      OnPause="PauseRun"
-                     OnStep="StepRun"
+                     OnStep="StepRunAsync"
                      OnReset="ResetRun"
                      OnCancel="CancelFastRun"
                      OnFastModeChanged="SetFastMode"
@@ -80,7 +80,7 @@
                    LogScale="_logScale"
                    Description="@AnalysisDescription"
                    Hint="@AnalysisHint"
-                   CanExportCsv="@(!_isRunning && _runnerStarted && _runner.Log.Count > 0)"
+                   CanExportCsv="@(!_isRunning && _runnerStarted && RunnerLog.Count > 0)"
                    CanAddToComparison="@(!_isRunning && _result is not null && !_history.Contains(_result))"
                    StatusMessage="@_fileStatus"
                    StatusIsError="_fileStatusIsError"
@@ -109,7 +109,11 @@
     private const double PlotRefreshSeconds = 0.2;
 
     private readonly ExperimentRunner _runner = new();
+    private readonly CustomExperimentRunner _customRunner = new();
     private readonly Queue<FramePerfSample> _perfWindow = new();
+    private JsController? _activeJsController;
+    private DotNetObjectReference<Home>? _selfRef;
+    private bool _activeRunIsCustom;
 
     private CancellationTokenSource? _loopCts;
     private CancellationTokenSource? _stabilityDebounceCts;
@@ -158,6 +162,11 @@
     private double _avgSimSeconds;
     private double _avgRtf;
 
+    private bool IsRunnerFinished => _activeRunIsCustom ? _customRunner.IsFinished : _runner.IsFinished;
+    private RunResult? RunnerResult => _activeRunIsCustom ? _customRunner.Result : _runner.Result;
+    private IReadOnlyList<LogRow> RunnerLog => _activeRunIsCustom ? _customRunner.Log : _runner.Log;
+    private ExperimentSnapshot RunnerCurrent => _activeRunIsCustom ? _customRunner.Current : _runner.Current;
+
     private PerfMetrics CurrentPerfMetrics => new(
         _avgAdvanceByMs,
         _avgRenderMs,
@@ -172,6 +181,12 @@
 
     protected override void OnAfterRender(bool firstRender)
     {
+        if (firstRender)
+        {
+            _selfRef = DotNetObjectReference.Create(this);
+            ((IJSInProcessRuntime)JS).InvokeVoid("RobotArmCustomController.registerHost", _selfRef);
+        }
+
         if (_measuringFrameRender)
         {
             var renderMs = Stopwatch.GetElapsedTime(_renderStartTimestamp).TotalMilliseconds;
@@ -272,6 +287,75 @@
         ResetRun();
     }
 
+    private async Task<bool> TryBeginRunnerAsync()
+    {
+        _state.CustomControllerError = null;
+        _state.CustomControllerSlowWarning = null;
+        DisposeActiveJsController();
+
+        var scenario = _state.BuildScenario();
+        if (_state.UseCustomController)
+        {
+            var dryRun = await JS.InvokeAsync<DryRunResult>(
+                "RobotArmCustomController.dryRunInWorker",
+                _state.CustomControllerCode,
+                _state.Kp,
+                _state.Kd,
+                _state.Ki);
+
+            if (!dryRun.Ok)
+            {
+                _state.CustomControllerError = dryRun.Error ?? "Kuru çalıştırma başarısız oldu.";
+                StateHasChanged();
+                return false;
+            }
+
+            try
+            {
+                var belief = _state.BuildControllerBelief();
+                _activeJsController = new JsController(
+                    belief,
+                    (IJSInProcessRuntime)JS,
+                    _state.CustomControllerCode,
+                    _state.Kp,
+                    _state.Kd,
+                    _state.Ki);
+            }
+            catch (Exception ex)
+            {
+                _state.CustomControllerError = ex.Message;
+                StateHasChanged();
+                return false;
+            }
+
+            _activeRunIsCustom = true;
+            var json = _state.SerializeScenarioWithCustomController(scenario);
+            _customRunner.Start(scenario, _activeJsController, json);
+            _state.CustomControllerSlowWarning = _activeJsController.SlowCallWarning;
+        }
+        else
+        {
+            _activeRunIsCustom = false;
+            _runner.Start(scenario);
+        }
+
+        _runnerStarted = true;
+        return true;
+    }
+
+    private void AdvanceRunnerBy(double simSeconds)
+    {
+        if (_activeRunIsCustom)
+        {
+            _customRunner.AdvanceBy(simSeconds);
+            _state.CustomControllerSlowWarning = _activeJsController?.SlowCallWarning;
+        }
+        else
+        {
+            _runner.AdvanceBy(simSeconds);
+        }
+    }
+
     private async Task StartRunAsync()
     {
         _state.RecomputeValidation();
@@ -288,11 +372,12 @@
 
         if (!_runnerStarted || _isFinished)
         {
-            var scenario = _state.BuildScenario();
-            _runner.Start(scenario);
-            _runnerStarted = true;
-            _isFinished = _runner.IsFinished;
-            _result = _runner.Result;
+            if (!await TryBeginRunnerAsync())
+            {
+                return;
+            }
+            _isFinished = IsRunnerFinished;
+            _result = RunnerResult;
             _perfWindow.Clear();
             SyncFromRunner();
             RefreshPlots(force: true);
@@ -316,7 +401,7 @@
         {
             await Task.Delay(16, token);
 
-            while (!token.IsCancellationRequested && !_runner.IsFinished)
+            while (!token.IsCancellationRequested && !IsRunnerFinished)
             {
                 var frameStart = Stopwatch.GetTimestamp();
                 var wallElapsed = Stopwatch.GetElapsedTime(lastWallTimestamp, frameStart).TotalSeconds;
@@ -325,21 +410,21 @@
                 // Advance by elapsed real time, capped at 50 ms of simulated time per frame.
                 var targetSimSlice = Math.Clamp(wallElapsed, _state.StepSeconds, 0.050);
 
-                var prevSimTime = _runner.Current.Time;
+                var prevSimTime = RunnerCurrent.Time;
                 var advStart = Stopwatch.GetTimestamp();
-                _runner.AdvanceBy(targetSimSlice);
+                AdvanceRunnerBy(targetSimSlice);
                 var advMs = Stopwatch.GetElapsedTime(advStart).TotalMilliseconds;
-                var simDelta = _runner.Current.Time - prevSimTime;
+                var simDelta = RunnerCurrent.Time - prevSimTime;
 
                 SyncFromRunner();
-                RefreshPlots(force: _runner.IsFinished);
+                RefreshPlots(force: IsRunnerFinished);
 
-                if (_runner.IsFinished)
+                if (IsRunnerFinished)
                 {
                     _isFinished = true;
                     _isRunning = false;
                     _isPaused = false;
-                    _result = _runner.Result;
+                    _result = RunnerResult;
                     UpdateResultScenario();
                     BeginFrameRenderMeasurement(frameStart, wallElapsed, advMs, simDelta);
                     StateHasChanged();
@@ -366,6 +451,27 @@
     {
         const double fastChunkSimSeconds = 0.25;
 
+        if (!_runnerStarted || _isFinished)
+        {
+            if (!await TryBeginRunnerAsync())
+            {
+                return;
+            }
+            _isFinished = IsRunnerFinished;
+            _result = RunnerResult;
+            _perfWindow.Clear();
+            SyncFromRunner();
+            if (_isFinished)
+            {
+                RefreshPlots(force: true);
+                UpdateResultScenario();
+                _isRunning = false;
+                _isPaused = false;
+                StateHasChanged();
+                return;
+            }
+        }
+
         _isRunning = true;
         _isPaused = false;
         _loopCts = new CancellationTokenSource();
@@ -373,28 +479,17 @@
 
         try
         {
-            if (!_runnerStarted || _isFinished)
-            {
-                var scenario = _state.BuildScenario();
-                _runner.Start(scenario);
-                _runnerStarted = true;
-                _isFinished = false;
-                _result = null;
-                _perfWindow.Clear();
-                SyncFromRunner();
-            }
-
             var sw = Stopwatch.StartNew();
             var lastWallTimestamp = Stopwatch.GetTimestamp();
 
-            while (!_runner.IsFinished && !token.IsCancellationRequested)
+            while (!IsRunnerFinished && !token.IsCancellationRequested)
             {
                 var chunkStart = Stopwatch.GetTimestamp();
-                var prevSimTime = _runner.Current.Time;
+                var prevSimTime = RunnerCurrent.Time;
                 var advStart = Stopwatch.GetTimestamp();
-                _runner.AdvanceBy(fastChunkSimSeconds);
+                AdvanceRunnerBy(fastChunkSimSeconds);
                 var advMs = Stopwatch.GetElapsedTime(advStart).TotalMilliseconds;
-                var simDelta = _runner.Current.Time - prevSimTime;
+                var simDelta = RunnerCurrent.Time - prevSimTime;
 
                 SyncFromRunner();
 
@@ -402,7 +497,7 @@
                 var wallElapsed = Stopwatch.GetElapsedTime(lastWallTimestamp, now).TotalSeconds;
                 lastWallTimestamp = now;
 
-                if (_runner.IsFinished)
+                if (IsRunnerFinished)
                 {
                     BeginFrameRenderMeasurement(chunkStart, wallElapsed, advMs, simDelta);
                     break;
@@ -419,7 +514,7 @@
                 return;
             }
 
-            var res = _runner.Result!;
+            var res = RunnerResult!;
             _fastComputeWallMs = Math.Max(0.1, sw.Elapsed.TotalMilliseconds);
             var totalSim = Math.Max(res.Final.Time, _state.StepSeconds);
             _realTimeFactor = totalSim / Math.Max(1e-5, sw.Elapsed.TotalSeconds);
@@ -456,7 +551,7 @@
         RefreshPlots(force: true);
     }
 
-    private void StepRun()
+    private async Task StepRunAsync()
     {
         _state.RecomputeValidation();
         if (_state.ValidationErrors.Count > 0) return;
@@ -467,18 +562,20 @@
 
         if (!_runnerStarted || _isFinished)
         {
-            _runner.Start(_state.BuildScenario());
-            _runnerStarted = true;
+            if (!await TryBeginRunnerAsync())
+            {
+                return;
+            }
         }
 
-        if (!_runner.IsFinished)
+        if (!IsRunnerFinished)
         {
-            _runner.AdvanceBy(_state.SamplePeriodSeconds);
+            AdvanceRunnerBy(_state.SamplePeriodSeconds);
         }
 
         SyncFromRunner();
-        _isFinished = _runner.IsFinished;
-        _result = _runner.Result;
+        _isFinished = IsRunnerFinished;
+        _result = RunnerResult;
         _isPaused = !_isFinished;
         RefreshPlots(force: true);
         UpdateResultScenario();
@@ -487,7 +584,9 @@
     private void ResetRun()
     {
         CancelLoop();
+        DisposeActiveJsController();
         _runnerStarted = false;
+        _activeRunIsCustom = false;
         _isRunning = false;
         _isPaused = false;
         _isFinished = false;
@@ -519,7 +618,7 @@
         if (force)
         {
             _plotsBuiltTimestamp = now;
-            _plots = RunPlots.Build(_runner.Log, _logScale);
+            _plots = RunPlots.Build(RunnerLog, _logScale);
             _pendingPlots = null;
             return;
         }
@@ -530,7 +629,7 @@
                 return;
             }
             _plotsBuiltTimestamp = now;
-            _pendingPlots = RunPlots.Build(_runner.Log, _logScale);
+            _pendingPlots = RunPlots.Build(RunnerLog, _logScale);
             _pendingIndex = 0;
         }
         var p = _pendingPlots;
@@ -556,7 +655,7 @@
         }
         try
         {
-            _resultScenario = ScenarioJson.Deserialize(_result.ScenarioJson);
+            _resultScenario = LabState.DeserializeScenarioWithCustomController(_result.ScenarioJson, out _);
         }
         catch (Exception)
         {
@@ -608,12 +707,12 @@
     /// <summary>The CSV log of the run (finished or paused), written by Core's CsvLogWriter (SPEC §10).</summary>
     private async Task ExportCsvAsync()
     {
-        if (!_runnerStarted || _isRunning || _runner.Log.Count == 0) return;
+        if (!_runnerStarted || _isRunning || RunnerLog.Count == 0) return;
         var writer = new StringWriter(CultureInfo.InvariantCulture);
-        CsvLogWriter.Write(writer, _runner.Log);
+        CsvLogWriter.Write(writer, RunnerLog);
         var name = _resultScenario?.Name ?? _state.Name;
         await DownloadAsync($"{FileSlug(name)}-log.csv", "text/csv", writer.ToString());
-        SetFileStatus($"CSV kaydı indirildi ({_runner.Log.Count} örnek).", false);
+        SetFileStatus($"CSV kaydı indirildi ({RunnerLog.Count} örnek).", false);
     }
 
     /// <summary>The scenario of the finished run if there is one, otherwise the current setup.</summary>
@@ -636,7 +735,7 @@
             }
             try
             {
-                json = ScenarioJson.Serialize(_state.BuildScenario());
+                json = _state.SerializeScenarioWithCustomController();
                 name = _state.Name;
             }
             catch (Exception ex)
@@ -660,13 +759,13 @@
             await using var stream = e.File.OpenReadStream(maxAllowedSize: 1_000_000);
             using var reader = new StreamReader(stream, Encoding.UTF8);
             var json = await reader.ReadToEndAsync();
-            var scenario = ScenarioJson.Deserialize(json);
+            var scenario = LabState.DeserializeScenarioWithCustomController(json, out var customCode);
             if (scenario.Task.Branch != ElbowBranch.Up)
             {
                 SetFileStatus("Bu senaryo dirsek-aşağı IK kolunu kullanıyor; laboratuvar arayüzü yalnız dirsek-yukarı kolu destekler.", true);
                 return;
             }
-            _state.LoadScenario(scenario, recomputeStabilityNow: false);
+            _state.LoadScenario(scenario, recomputeStabilityNow: false, customControllerCode: customCode);
             HandleScenarioChanged();
             SetFileStatus($"\"{scenario.Name}\" yüklendi ({e.File.Name}). Aynı koşuyu tekrarlamak için Başlat'a basın.", false);
         }
@@ -691,6 +790,69 @@
         }
     }
 
+    [JSInvokable("VerifyPdgEquivalence")]
+    public object VerifyPdgEquivalence()
+    {
+        var baseScenario = ScenarioLibrary.All[0] with
+        {
+            Controller = new ControllerSettings
+            {
+                Method = ControlMethod.PDG,
+                IntegralEnabled = false,
+                PredictHalfSample = true,
+                Kp = JointVector.From(PdGravity.DefaultGains.Kp.ToArray()),
+                Kd = JointVector.From(PdGravity.DefaultGains.Kd.ToArray()),
+                Ki = null
+            }
+        };
+
+        var coreRunner = new ExperimentRunner();
+        var coreRes = coreRunner.Run(baseScenario);
+
+        var belief = new ControllerBelief(ArmModel.OpenManipulatorX(), baseScenario.GetPlanet(), baseScenario.PayloadKg);
+        using var jsCtrl = new JsController(
+            belief,
+            (IJSInProcessRuntime)JS,
+            CustomControllerExamples.DefaultPdgCode,
+            PdGravity.DefaultGains.Kp.ToArray(),
+            PdGravity.DefaultGains.Kd.ToArray(),
+            new double[4]);
+
+        var customRunner = new CustomExperimentRunner();
+        var customRes = customRunner.Run(baseScenario, jsCtrl, ScenarioJson.Serialize(baseScenario));
+
+        double maxDiffQ = 0, maxDiffQd = 0, maxDiffU = 0, maxDiffApplied = 0, maxDiffTool = 0;
+        var count = Math.Min(coreRes.Log.Count, customRes.Log.Count);
+        for (var k = 0; k < count; k++)
+        {
+            var a = coreRes.Log[k];
+            var b = customRes.Log[k];
+            for (var i = 0; i < 4; i++)
+            {
+                maxDiffQ = Math.Max(maxDiffQ, Math.Abs(a.Q[i] - b.Q[i]));
+                maxDiffQd = Math.Max(maxDiffQd, Math.Abs(a.QDot[i] - b.QDot[i]));
+                maxDiffU = Math.Max(maxDiffU, Math.Abs(a.Command[i] - b.Command[i]));
+                maxDiffApplied = Math.Max(maxDiffApplied, Math.Abs(a.AppliedTorque[i] - b.AppliedTorque[i]));
+            }
+            maxDiffTool = Math.Max(maxDiffTool, (a.Tool - b.Tool).Length);
+        }
+        var maxDiffAll = Math.Max(Math.Max(maxDiffQ, maxDiffQd), Math.Max(Math.Max(maxDiffU, maxDiffApplied), maxDiffTool));
+        return new
+        {
+            coreRows = coreRes.Log.Count,
+            customRows = customRes.Log.Count,
+            coreSuccess = coreRes.Success,
+            customSuccess = customRes.Success,
+            maxDiffQ,
+            maxDiffQd,
+            maxDiffU,
+            maxDiffApplied,
+            maxDiffTool,
+            maxDiffAll,
+            pass = coreRes.Log.Count == customRes.Log.Count && maxDiffAll <= 1e-9
+        };
+    }
+
     private async Task DownloadAsync(string fileName, string mimeType, string text)
     {
         await JS.InvokeVoidAsync("robotArmFiles.download", fileName, mimeType, Encoding.UTF8.GetBytes(text));
@@ -711,8 +873,18 @@
 
     private void SyncFromRunner()
     {
-        _snapshot = _runner.Current;
-        _latestRow = _runner.Log.Count > 0 ? _runner.Log[^1] : null;
+        _snapshot = RunnerCurrent;
+        var log = RunnerLog;
+        _latestRow = log.Count > 0 ? log[^1] : null;
+    }
+
+    private void DisposeActiveJsController()
+    {
+        if (_activeJsController is not null)
+        {
+            _activeJsController.Dispose();
+            _activeJsController = null;
+        }
     }
 
     private void CancelLoop()
@@ -740,5 +912,7 @@
         _isRunning = false;
         CancelLoop();
         CancelStabilityDebounce();
+        DisposeActiveJsController();
+        _selfRef?.Dispose();
     }
 }
