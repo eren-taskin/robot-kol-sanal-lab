@@ -1,0 +1,223 @@
+@namespace RobotArm.Web.Components
+@implements IDisposable
+@inject IJSRuntime JS
+
+<section class="panel-card arm-view-panel" id="arm-view-3d-panel">
+    <div class="panel-header">
+        <div class="arm-header-left">
+            <h2>Robot Kol Görünümü</h2>
+            <div class="mode-toggle" role="group" aria-label="Görünüm modu (2D / 3D)">
+                <button id="arm-view-2d-btn" type="button" class="mode-btn" @onclick="() => OnSwitchTo2D.InvokeAsync()">
+                    2D
+                </button>
+                <button id="arm-view-3d-btn" type="button" class="mode-btn mode-active">
+                    3D
+                </button>
+            </div>
+            <button id="arm-view-reset-btn" type="button" class="btn-secondary-sm" @onclick="ResetCameraView">
+                Görünümü sıfırla
+            </button>
+        </div>
+        <div class="legend-row">
+            <span class="legend-item"><span class="dot dot-normal"></span>Eklem (Normal)</span>
+            <span class="legend-item"><span class="dot dot-amber"></span>Sınıra Yakın</span>
+            <span class="legend-item"><span class="dot dot-red"></span>Sınır Aşıldı</span>
+            <span class="legend-item"><span class="dot dot-target"></span>Hedef</span>
+            <span class="legend-item"><span class="dot dot-object"></span>Nesne / Yük</span>
+        </div>
+    </div>
+
+    <div class="arm-3d-container">
+        <canvas id="arm-3d-canvas" class="arm-3d-canvas"></canvas>
+        <div class="arm-3d-hint">
+            Sol tık: döndür · Tekerlek: yakınlaştır · Sağ tık: kaydır · Z ekseni yukarı (SPEC §2) · 50 mm zemin ızgarası
+        </div>
+    </div>
+
+    @{
+        var q = GetCurrentQ();
+    }
+
+    <!-- Joint limit status strip -->
+    <div class="joint-limit-strip">
+        @for (var i = 0; i < 4; i++)
+        {
+            var angle = q[i];
+            var joint = _model.Joints[i];
+            var stateClass = GetJointBadgeClass(i, angle);
+            var statusLabel = GetJointStatusText(i, angle);
+            <div class="joint-limit-pill @stateClass">
+                <span><strong>Eklem @(i + 1):</strong> @LabFormat.Fixed(angle, 3) rad</span>
+                <small>[sınır: @LabFormat.Fixed(joint.LowerLimit, 2) .. @LabFormat.Fixed(joint.UpperLimit, 2)] — @statusLabel</small>
+            </div>
+        }
+    </div>
+</section>
+
+@code {
+    private static readonly ArmModel _model = ArmModel.OpenManipulatorX();
+    private static readonly double[] _geometryConstants =
+    [
+        OpenManipulatorXGeometry.D1,
+        OpenManipulatorXGeometry.A2X,
+        OpenManipulatorXGeometry.A2Z,
+        OpenManipulatorXGeometry.L3,
+        OpenManipulatorXGeometry.L4
+    ];
+
+    private readonly double[] _qBuf = new double[4];
+    private readonly Frame[] _framesBuf = new Frame[4];
+    private readonly double[] _interopBuf = new double[62];
+    private bool _sceneInitialized;
+
+    [Parameter, EditorRequired] public LabState State { get; set; } = null!;
+    [Parameter] public ExperimentSnapshot? Snapshot { get; set; }
+    [Parameter] public EventCallback OnSwitchTo2D { get; set; }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (JS is IJSInProcessRuntime inProc)
+        {
+            if (!_sceneInitialized)
+            {
+                _sceneInitialized = inProc.Invoke<bool>("RobotArm3D.initScene", "arm-3d-canvas", _geometryConstants);
+            }
+            if (_sceneInitialized)
+            {
+                FillInteropBuffer();
+                inProc.InvokeVoid("RobotArm3D.updateScene", _interopBuf);
+            }
+        }
+    }
+
+    private void FillInteropBuffer()
+    {
+        var q = GetCurrentQ();
+        var toolPos = ForwardKinematics.ComputeFrames(_model, q, _framesBuf);
+
+        for (var i = 0; i < 4; i++)
+        {
+            var f = _framesBuf[i];
+            var r = f.Rotation;
+            var p = f.Origin;
+            var b = i * 12;
+            _interopBuf[b + 0] = r.M00;
+            _interopBuf[b + 1] = r.M01;
+            _interopBuf[b + 2] = r.M02;
+            _interopBuf[b + 3] = p.X;
+            _interopBuf[b + 4] = r.M10;
+            _interopBuf[b + 5] = r.M11;
+            _interopBuf[b + 6] = r.M12;
+            _interopBuf[b + 7] = p.Y;
+            _interopBuf[b + 8] = r.M20;
+            _interopBuf[b + 9] = r.M21;
+            _interopBuf[b + 10] = r.M22;
+            _interopBuf[b + 11] = p.Z;
+
+            _interopBuf[51 + i] = GetJointColorCode(i, q[i]);
+        }
+
+        _interopBuf[48] = toolPos.X;
+        _interopBuf[49] = toolPos.Y;
+        _interopBuf[50] = toolPos.Z;
+
+        var target = TargetPosition;
+        _interopBuf[55] = target.X;
+        _interopBuf[56] = target.Y;
+        _interopBuf[57] = target.Z;
+
+        var obj = ObjectPosition;
+        _interopBuf[58] = obj.X;
+        _interopBuf[59] = obj.Y;
+        _interopBuf[60] = obj.Z;
+
+        var showDetachedObj = State.TaskKind == TaskKind.PickPlace && !PayloadAttached;
+        var showAttachedPayload = PayloadAttached || (State.TaskKind != TaskKind.PickPlace && EffectivePayloadKg > 0);
+        var flags = (showDetachedObj ? 1 : 0) | (showAttachedPayload ? 2 : 0);
+        _interopBuf[61] = flags;
+    }
+
+    private void ResetCameraView()
+    {
+        if (JS is IJSInProcessRuntime inProc && _sceneInitialized)
+        {
+            inProc.InvokeVoid("RobotArm3D.resetView");
+        }
+    }
+
+    public void Dispose()
+    {
+        if (JS is IJSInProcessRuntime inProc && _sceneInitialized)
+        {
+            _sceneInitialized = false;
+            inProc.InvokeVoid("RobotArm3D.disposeScene");
+        }
+    }
+
+    private double[] GetCurrentQ()
+    {
+        if (Snapshot is ExperimentSnapshot s)
+        {
+            s.Q.CopyTo(_qBuf);
+        }
+        else
+        {
+            for (var i = 0; i < 4; i++)
+            {
+                _qBuf[i] = double.IsFinite(State.StartQ[i]) ? State.StartQ[i] : 0.0;
+            }
+        }
+        return _qBuf;
+    }
+
+    private bool PayloadAttached => Snapshot is ExperimentSnapshot s
+        ? s.PayloadAttached
+        : State.TaskKind != TaskKind.PickPlace && State.PayloadKg > 0;
+
+    private double EffectivePayloadKg => Snapshot is ExperimentSnapshot s
+        ? s.PayloadKg
+        : (State.TaskKind == TaskKind.PickPlace ? 0.0 : Math.Max(0.0, State.PayloadKg));
+
+    private Vector3d TargetPosition => new(
+        double.IsFinite(State.TargetMeters[0]) ? State.TargetMeters[0] : 0,
+        double.IsFinite(State.TargetMeters[1]) ? State.TargetMeters[1] : 0,
+        double.IsFinite(State.TargetMeters[2]) ? State.TargetMeters[2] : 0);
+
+    private Vector3d ObjectPosition => Snapshot is ExperimentSnapshot s && State.TaskKind == TaskKind.PickPlace
+        ? s.ObjectPosition
+        : new Vector3d(
+            double.IsFinite(State.ObjectPositionMeters[0]) ? State.ObjectPositionMeters[0] : 0,
+            double.IsFinite(State.ObjectPositionMeters[1]) ? State.ObjectPositionMeters[1] : 0,
+            double.IsFinite(State.ObjectPositionMeters[2]) ? State.ObjectPositionMeters[2] : 0);
+
+    private static bool IsNearLimit(JointDefinition j, double angle)
+    {
+        if (!j.IsWithinLimits(angle)) return false;
+        var margin = Math.Min(0.15, 0.08 * (j.UpperLimit - j.LowerLimit));
+        return (angle - j.LowerLimit) <= margin || (j.UpperLimit - angle) <= margin;
+    }
+
+    private static int GetJointColorCode(int index, double angle)
+    {
+        var j = _model.Joints[index];
+        if (!j.IsWithinLimits(angle)) return 2; // Red
+        if (IsNearLimit(j, angle)) return 1;    // Amber
+        return 0;                               // Blue
+    }
+
+    private static string GetJointBadgeClass(int index, double angle)
+    {
+        var j = _model.Joints[index];
+        if (!j.IsWithinLimits(angle)) return "limit-pill-danger";
+        if (IsNearLimit(j, angle)) return "limit-pill-amber";
+        return "limit-pill-normal";
+    }
+
+    private static string GetJointStatusText(int index, double angle)
+    {
+        var j = _model.Joints[index];
+        if (!j.IsWithinLimits(angle)) return "Sınır Dışı";
+        if (IsNearLimit(j, angle)) return "Sınıra Yakın";
+        return "Normal";
+    }
+}

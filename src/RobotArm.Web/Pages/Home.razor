@@ -43,8 +43,18 @@
                      OnFastModeChanged="SetFastMode"
                      OnShowPerfOverlayChanged="SetShowPerfOverlay" />
 
-        <ArmView State="_state"
-                 Snapshot="_snapshot" />
+        @if (_view3D)
+        {
+            <ArmView3D State="_state"
+                       Snapshot="_snapshot"
+                       OnSwitchTo2D="() => _view3D = false" />
+        }
+        else
+        {
+            <ArmView State="_state"
+                     Snapshot="_snapshot"
+                     OnSwitchTo3D="() => _view3D = true" />
+        }
 
         <StabilityPanel Analysis="_state.Stability"
                         IsRunning="_isRunning" />
@@ -118,6 +128,7 @@
     private bool _isFinished;
     private bool _fastMode;
     private bool _showPerfOverlay;
+    private bool _view3D;
 
     private ExperimentSnapshot? _snapshot;
     private LogRow? _latestRow;

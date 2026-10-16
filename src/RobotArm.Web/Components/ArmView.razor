@@ -1,8 +1,18 @@
 @namespace RobotArm.Web.Components
 
-<section class="panel-card arm-view-panel">
+<section class="panel-card arm-view-panel" id="arm-view-2d-panel">
     <div class="panel-header">
-        <h2>Robot Kol Görünümü</h2>
+        <div class="arm-header-left">
+            <h2>Robot Kol Görünümü</h2>
+            <div class="mode-toggle" role="group" aria-label="Görünüm modu (2D / 3D)">
+                <button id="arm-view-2d-btn" type="button" class="mode-btn mode-active">
+                    2D
+                </button>
+                <button id="arm-view-3d-btn" type="button" class="mode-btn" @onclick="() => OnSwitchTo3D.InvokeAsync()">
+                    3D
+                </button>
+            </div>
+        </div>
         <div class="legend-row">
             <span class="legend-item"><span class="dot dot-normal"></span>Eklem (Normal)</span>
             <span class="legend-item"><span class="dot dot-amber"></span>Sınıra Yakın</span>
@@ -275,6 +285,7 @@
 
     [Parameter, EditorRequired] public LabState State { get; set; } = null!;
     [Parameter] public ExperimentSnapshot? Snapshot { get; set; }
+    [Parameter] public EventCallback OnSwitchTo3D { get; set; }
 
     private double[] GetCurrentQ()
     {
