@@ -126,7 +126,7 @@ Course rule (Lecture Note 1, §8): every member must be able to explain and defe
 | A1c | Plain CT default gains retuned for 6 dB / 40° margins (D11) | Antigravity | done |
 | A2 | Web: linear analysis page /analiz | Antigravity | done |
 | M1 | Web: fit all pages within 375 px phone width | Antigravity | done |
-| T11 | Publish to GitHub Pages | Claude Code | not started |
+| T11 | Publish to GitHub Pages | Antigravity | done |
 | T10b | Kendi kontrolcün (student-written controller) | — | not started |
 | T12 | Experiments for the report | conductor + team | not started |
 | T13 | Optional: MuJoCo cross-check | conductor + team | not started |
