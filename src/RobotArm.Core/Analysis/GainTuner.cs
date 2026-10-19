@@ -340,6 +340,8 @@ public static class GainTuner
         {
             ArgumentNullException.ThrowIfNull(s);
             s.Validate();
+            if (s.Controller.Method == ControlMethod.STSMC)
+                throw new NotSupportedException("STSMC is not linearisable at s = 0, so the tuner's margin constraints do not apply (SPEC §12.7, docs/DECISIONS.md D13).");
         }
     }
 

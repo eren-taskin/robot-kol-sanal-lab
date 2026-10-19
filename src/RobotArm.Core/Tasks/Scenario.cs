@@ -27,7 +27,9 @@ public enum ControlMethod
     /// <summary>PD plus gravity. SPEC §7.</summary>
     PDG,
     /// <summary>Computed torque, optionally CT+I. SPEC §7.</summary>
-    CT
+    CT,
+    /// <summary>Super-twisting sliding mode on the controller's inverse dynamics. SPEC §7; docs/DECISIONS.md D13.</summary>
+    STSMC
 }
 /// <summary>Whether PickPlace events update the controller's payload model. SPEC §8.3.</summary>
 public enum PayloadKnowledge
@@ -107,8 +109,16 @@ public sealed record ControllerSettings
     public JointVector? Kd { get; init; }
     /// <summary>Optional PID or CT+I Ki override. SPEC §7.</summary>
     public JointVector? Ki { get; init; }
-    /// <summary>CT midpoint prediction. SPEC §7.</summary>
+    /// <summary>CT, CT+I and STSMC midpoint prediction. SPEC §7.</summary>
     public bool PredictHalfSample { get; init; } = true;
+    /// <summary>Optional STSMC sliding-surface slope Λ override, 1/s; null selects the default. SPEC §7.</summary>
+    public JointVector? Lambda { get; init; }
+    /// <summary>Optional STSMC k1 override; null selects the default. SPEC §7.</summary>
+    public JointVector? K1 { get; init; }
+    /// <summary>Optional STSMC k2 override, rad/s³; null selects the default. SPEC §7.</summary>
+    public JointVector? K2 { get; init; }
+    /// <summary>STSMC boundary layer ε ≥ 0 of s/(|s| + ε), rad/s; 0 is the pure law. SPEC §7.</summary>
+    public double BoundaryLayer { get; init; }
 }
 
 /// <summary>Complete, JSON-serializable experiment input. All values are immutable. SPEC §8.3.</summary>
@@ -167,6 +177,8 @@ public sealed record Scenario
         Range(FilterTimeConstant, 0, double.MaxValue, nameof(FilterTimeConstant)); Range(NoiseStdDev, 0, double.MaxValue, nameof(NoiseStdDev));
         if (!Enum.IsDefined(Task.Kind) || !Enum.IsDefined(Task.Shape) || !Enum.IsDefined(Task.Branch) || !Enum.IsDefined(Controller.Method) || !Enum.IsDefined(Belief.Knowledge)) throw new ArgumentOutOfRangeException(nameof(Task));
         Controller.Kp?.Validate(nameof(Controller.Kp), true); Controller.Kd?.Validate(nameof(Controller.Kd), true); Controller.Ki?.Validate(nameof(Controller.Ki), true);
+        Controller.Lambda?.Validate(nameof(Controller.Lambda), true); Controller.K1?.Validate(nameof(Controller.K1), true); Controller.K2?.Validate(nameof(Controller.K2), true);
+        Range(Controller.BoundaryLayer, 0, double.MaxValue, nameof(Controller.BoundaryLayer));
         if (Controller.IntegralEnabled && Controller.Method != ControlMethod.CT) throw new ArgumentException("IntegralEnabled is the CT+I option.");
         Task.Start.Validate(nameof(Task.Start)); Task.Disturbance.Validate(nameof(Task.Disturbance));
         var model = ArmModel.OpenManipulatorX();

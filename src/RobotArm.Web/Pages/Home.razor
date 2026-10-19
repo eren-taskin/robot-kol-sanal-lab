@@ -16,9 +16,12 @@
                     OnScenarioSelected="HandleScenarioChanged"
                     OnStateChanged="HandleSetupEdited" />
 
-        <DesignHelper State="_state"
-                      IsRunning="_isRunning"
-                      OnGainsApplied="HandleSetupEdited" />
+        @if (!_state.IsSuperTwisting)
+        {
+            <DesignHelper State="_state"
+                          IsRunning="_isRunning"
+                          OnGainsApplied="HandleSetupEdited" />
+        }
     </div>
 
     <!-- Centre Column: Run Controls, Arm View, Stability Panel -->

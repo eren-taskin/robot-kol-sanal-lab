@@ -324,3 +324,35 @@ The `dotnet.native.wasm` grows from 2.9 MB to 15.0 MB because it now holds the c
 - **Persistence:** `LabState.SerializeScenarioWithCustomController` writes `"customController"` into the exported `.scenario.json`, and `LabState.DeserializeScenarioWithCustomController` extracts and strips `"customController"` before passing the JSON to `ScenarioJson.Deserialize` (preserving Core's `JsonUnmappedMemberHandling.Disallow`).
 - **Verification:** On `"Dünya – boş kol – noktaya git"`, the prefilled PD + gravity law (`CustomControllerExamples.DefaultPdgCode`) produces the exact same 5000-row log as built-in `PDG` (`maxDiffAll = 0.0 <= 1e-9`). All three Turkish-commented example laws (`pdg`, `ct`, `smc`) complete the reach task with `Görev Başarılı` in 482–628 ms in Fast mode.
 
+
+---
+
+## D13 – Super-twisting sliding mode controller (STSMC, S1)
+
+**Law** (`SuperTwistingSlidingMode`, SPEC §7). s = ė + Λe; u = M̂(q̄)(q̈_d + Λė + v) + ĥ(q̄, q̄̇) + τ̂f(q̄̇), clamped to ±τmax of the belief; v = k1·|s|^½·sign(s) + w, ẇ = k2·sign(s). With an exact model ṡ = −v: the textbook super-twisting loop. w is integrated once per sample with the elapsed time (w ← w + Δt·k2·sign(s_k), nothing at the first sample after a reset), and a joint whose output is clamped keeps its old w (as CT+I, D8). The mid-hold prediction of D7 **applies** unchanged, because the law is the same inverse-dynamics call as CT with a = q̈_d + Λė + v; it is on by default. On the V18 quintic with the exact model it does not help STSMC: max error 1.43e-4 rad with it, 1.28e-4 rad without (V45). Optional boundary layer sign(s) → s/(|s| + ε), default ε = 0. Λ = 20 1/s on every joint.
+
+**Gains from the measured L.** A wrong model enters as δ = M̂⁻¹(τ − ĥ − τ̂f) − q̈, zero with an exact model. The task's formula M̂⁻¹(τ − Mq̈ − h) is zero with the true M and h, so I read it as the believed model's residual on the true motion, δ = M̂⁻¹[(M − M̂)q̈ + (h − ĥ) + (τf − τ̂f)]. For "0,3 kg habersiz yük" (plant 0.3 kg, belief 0 kg) on the library path (V29: 1 s quintic, hold to 1.5 s, Earth, Ts = 2 ms), δ was evaluated at every logged sample on the reference, with the torque the true plant needs to follow it. That is the equivalent control w must supply while s = 0. Then L = max |Δδ|/Ts gives **L = [0, 93.79, 198.96, 1013.00] rad/s³** (max |δ| = [0, 91.7, 325.9, 1779] rad/s²). Joint 1 does not move on this path and the payload adds no torque about the vertical axis, so it takes joint 2's L. The standard choice k1 = 1.5√L, k2 = 1.1L gives k1 = [14.53, 14.53, 21.16, 47.74], k2 = [103.2, 103.2, 218.9, 1114.3] (checked against the measurement to 0.2 % by a test). The same δ taken from the closed-loop log (true state, applied τ, true q̈ = M⁻¹(τ − h − τf)) also contains the part that depends on the command, (I − M⁻¹M̂)·a, which jumps with u at every sample: [0, 2957, 4695, 33336] rad/s³ from the CT+I run and [0, 416, 1170, 5286] rad/s³ from the faulted STSMC run. That part is an input-gain error, not a Lipschitz perturbation, so it was not used for the gains.
+
+**Sampling.** Sampled with a zero-order hold, the super-twisting loop cannot reach s = 0, only a band |s| = O(Ts²), |ṡ| = O(Ts) (Levant). V44 measures it on a 1-DOF double integrator (J = 0.02 kg·m², d/J = 5 sin 2t, L = 10 rad/s³, Λ = 5): max |s| over 3–6 s is 1.051e-4 rad/s at Ts = 2 ms and 2.616e-5 rad/s at 1 ms. The ratio is 4.016 (max |x| ratio 4.032), the theoretical 4.
+
+**Why not linearisable.** |s|^½ has an infinite slope at s = 0, so the law has no linearisation at rest and no effective K. The controller does not implement `ILinearisableController`. `GainTuner` throws `NotSupportedException`. The Web stability panel and analysis page show "Bu kontrolcü doğrusallaştırılamaz; kök yer eğrisi ve Bode uygulanamaz" instead of ρ, poles, root locus, Bode, LQR and the tuner.
+
+**Comparison** (`docs/results/stsmc_comparison.csv`, V29 path, ε > 0 means ε = 0.5 rad/s; largest value over the joints; RMS while moving, t < 1 s):
+
+| Case | Controller | RMS (rad) | Peak (rad) | Chatter (N·m) | Clamped | Fault |
+|---|---|---|---|---|---|---|
+| plant 0.3 / belief 0 | CT | 0.461 | 0.560 | 0.0015 | 0 % | none |
+| | CT+I | 0.152 | 0.248 | 0.0015 | 0 % | none |
+| | STSMC ε = 0 | 0.502 | 0.920 | 0.0071 | 0 % | JointLimit j4, 0.2475 s |
+| | STSMC ε = 0.5 | 0.554 | 0.935 | 0.0062 | 0 % | JointLimit j4, 0.2755 s |
+| plant 0 / belief 0.3 | CT | 0.994 | 1.381 | 8.03 | 98.0 % | none |
+| | CT+I | 0.733 | 1.200 | 8.01 | 99.2 % | none |
+| | STSMC ε = 0 | 0.0146 | 0.0248 | 0.709 | 0 % | none |
+| | STSMC ε = 0.5 | 0.0090 | 0.0296 | 0.0019 | 0 % | none |
+
+- *Underestimate: STSMC with the standard gains is worse than CT+I and faults.* At t = 0 the wrist already needs |δ4| ≈ 1500 rad/s², the payload's gravity divided by the small believed wrist inertia. L describes only how fast δ changes, so w4 starts at 0 and grows at k2 = 1114 rad/s³ (−274 rad/s² at the fault). Meanwhile the believed M̂44 turns each rad/s² of v into far less torque than the 0.3 kg wrist needs (M̂/M ≈ 0.07 at the start pose). The wrist sags steadily (about 3 rad/s) into its upper limit. This is a monotonic drift, not the chattering knife edge of D11. The wrist RMS while moving is 3.3 × CT+I's (3.6 × with ε = 0.5).
+- *Overestimate: STSMC is far better than CT/CT+I.* With belief 0.3 kg the CT laws chatter between ±4.1 N·m (D11 CI-fix). STSMC with the same model never clamps: peak |u| is 1.23 N·m with ε = 0 and 0.91 N·m with ε = 0.5. Its largest RMS error is 2.0 % (1.2 %) of CT+I's.
+- *Boundary layer.* ε = 0.5 rad/s divides the chattering of the overestimate case by about 370 (0.709 → 0.0019 N·m) and brings the final error to 1e-4 rad. In the underestimate case it changes nothing essential. In a sweep at Λ = 20 (overestimate, largest joint), chattering stayed at 0.71–0.80 N·m up to ε = 0.1. It was 0.32 N·m at ε = 0.2 and 0.0019 N·m at 0.5, so the drop lies between 0.2 and 0.5.
+- *Gain scale* (`docs/results/stsmc_gain_scale.csv`, k1 = 1.5√(cL), k2 = 1.1cL). No single scale works in both cases. The underestimate case is fault-free at c = 3 (but peak error 1.76 rad), 30 and 100 (RMS 0.0054 rad at c = 30, 28 × better than CT+I), and faults at c = 1 and 10. The overestimate case is fault-free and unclamped only at c = 1 and 3, and clamps 88–97 % of the time with a fault from c = 10 on. The input gain M⁻¹M̂ ranges over roughly 0.07–14 on the wrist between the two cases, and the sampled square-root term cannot tolerate the high end with large gains.
+
+**Consequences.** The defaults stay at the standard choice for the measured L, as specified. The library scenario "Yanlış model – STSMC, 0,3 kg habersiz yük" therefore expects failure, and its description says so. V46 asserts what was measured (fault and RMS ratio ≥ 2 against CT+I), not the expected improvement. Choosing L from |δ(0)| or from the closed loop, or scaling the gains by an assumed bound on M⁻¹M̂, are open design questions for the report (T12).

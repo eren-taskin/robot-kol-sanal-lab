@@ -90,6 +90,7 @@
                     <option value="PDG">PDG (PD + Yerçekimi)</option>
                     <option value="CT">CT (Hesaplanmış Tork)</option>
                     <option value="CT+I">CT+I (Hesaplanmış Tork + İntegral)</option>
+                    <option value="STSMC">Süper-twisting kayan kipli (STSMC)</option>
                 </select>
             </div>
 
@@ -127,11 +128,11 @@
             </div>
 
             <div class="gains-summary-bar" id="analiz-gains-summary">
-                <span><strong>Kp:</strong> [@string.Join("; ", _state.Kp.Select(v => LabFormat.Input(v, "G5")))]</span>
-                <span><strong>Kd:</strong> [@string.Join("; ", _state.Kd.Select(v => LabFormat.Input(v, "G5")))]</span>
-                @if (HasIntegral)
+                <span><strong>@_state.GainLabel(0):</strong> [@string.Join("; ", _state.Kp.Select(v => LabFormat.Input(v, "G5")))]</span>
+                <span><strong>@_state.GainLabel(1):</strong> [@string.Join("; ", _state.Kd.Select(v => LabFormat.Input(v, "G5")))]</span>
+                @if (HasIntegral || IsNotLinearisable)
                 {
-                    <span><strong>Ki:</strong> [@string.Join("; ", _state.Ki.Select(v => LabFormat.Input(v, "G5")))]</span>
+                    <span><strong>@_state.GainLabel(2):</strong> [@string.Join("; ", _state.Ki.Select(v => LabFormat.Input(v, "G5")))]</span>
                 }
             </div>
         </div>
@@ -146,6 +147,15 @@
         }
     </section>
 
+    @if (IsNotLinearisable)
+    {
+        <div class="alert-box alert-warning" id="analiz-not-linearisable">
+            Bu kontrolcü doğrusallaştırılamaz; kök yer eğrisi ve Bode uygulanamaz.
+            <small>(Süper-twisting yasasındaki |s|^½·sign(s) teriminin s = 0'da eğimi sonsuzdur; kutuplar, kök yer eğrisi, Bode payları, LQR karşılaştırması ve otomatik kazanç ayarı bu kontrolcü için kapalıdır. Davranışı Laboratuvar sayfasındaki doğrusal olmayan deneyle inceleyin.)</small>
+        </div>
+    }
+    else
+    {
     <div class="analysis-panels-grid">
         <!-- PANEL 1: KUTUP HARİTASI -->
         <section class="panel-card analysis-panel-card" id="panel-poles">
@@ -733,6 +743,7 @@
             }
         </section>
     </div>
+    }
 </div>
 
 @code {
@@ -1042,9 +1053,12 @@
         ComputeAllPanels();
     }
 
+    /// <summary>STSMC has no linearisation at s = 0 (docs/DECISIONS.md D13): no analysis panels and no tuner.</summary>
+    private bool IsNotLinearisable => !_state.UseCustomController && _state.ControlMethod == ControlMethod.STSMC;
+
     private void ComputeAllPanels()
     {
-        if (_state.IsSimulationRunning || !ValidateAnalysisPose())
+        if (_state.IsSimulationRunning || IsNotLinearisable || !ValidateAnalysisPose())
         {
             return;
         }
@@ -1531,6 +1545,10 @@
 
     private async Task StartTunerAsync()
     {
+        if (IsNotLinearisable)
+        {
+            return;
+        }
         if (_tunerRunning || _state.IsSimulationRunning)
         {
             return;

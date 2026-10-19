@@ -42,6 +42,15 @@
             </div>
 
             <!-- 2. Örneklemeli Kapalı Çevrim Kararlılığı -->
+            @if (Analysis.NotLinearisable)
+            {
+                <div id="sampled-loop-card" class="stability-item status-warning">
+                    <div class="stability-title-row"><strong>2. Örneklemeli Çevrim Kararlılığı</strong></div>
+                    <p class="warning-sentence">Bu kontrolcü doğrusallaştırılamaz; kök yer eğrisi ve Bode uygulanamaz. ρ ve Ts sınırı hesaplanmaz.</p>
+                </div>
+            }
+            else
+            {
             <div id="sampled-loop-card" class="stability-item @(Analysis.SampledLoopUnstable ? "status-danger" : "status-ok")">
                 <div class="stability-title-row">
                     <strong>2. Örneklemeli Kapalı Çevrim</strong>
@@ -80,6 +89,7 @@
                     </p>
                 }
             </div>
+            }
 
             <!-- 3. Tork Bütçesi (Yerçekimi vs τmax) -->
             <div id="torque-budget-card" class="stability-item @(Analysis.TorqueBudgetWarning ? "status-warning" : "status-ok")">

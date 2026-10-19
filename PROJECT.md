@@ -129,6 +129,7 @@ Course rule (Lecture Note 1, §8): every member must be able to explain and defe
 | T11 | Publish to GitHub Pages | Antigravity | done |
 | T09b | Web: 3D arm view with Three.js (ArmView3D) | Antigravity | done |
 | T10b | Kendi kontrolcün (student-written controller) | Antigravity | done |
+| S1 | Super-twisting sliding mode controller (STSMC) and comparison (D13) | Claude Code | done; owner TBD |
 | T12 | Experiments for the report | conductor + team | not started |
 | T13 | Optional: MuJoCo cross-check | conductor + team | not started |
 | T14 | Optional: 3D view, adaptive controller, 6-DOF data | — | not started |

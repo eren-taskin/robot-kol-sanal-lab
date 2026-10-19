@@ -37,6 +37,7 @@ public sealed record StabilityAnalysis(
     double MaxStableSamplePeriodSeconds,
     bool SampledLoopUnstable,
     bool ExcludesIntegralNote,
+    bool NotLinearisable,
     double[] GravityTorqueNm,
     double[] StallTorqueNm,
     double[] TorqueUsagePercent,
@@ -83,6 +84,9 @@ public sealed class LabState
     public double[] Kp { get; } = [6.0, 6.0, 6.0, 2.0];
     public double[] Kd { get; } = [0.3, 0.6, 0.3, 0.05];
     public double[] Ki { get; } = [5.0, 20.0, 20.0, 8.0];
+    /// <summary>STSMC boundary layer ε, rad/s (SPEC §7). For STSMC, Kp/Kd/Ki hold Λ, k1 and k2.</summary>
+    public double BoundaryLayer { get; set; }
+    public bool IsSuperTwisting => !UseCustomController && ControlMethod == ControlMethod.STSMC;
 
     public PayloadKnowledge Knowledge { get; set; } = PayloadKnowledge.Informed;
     public bool UseBeliefPayloadOverride { get; set; }
@@ -107,7 +111,7 @@ public sealed class LabState
         double MaxStableStepSeconds,
         double MaxStableSamplePeriodSeconds,
         LinearSystem System,
-        ILinearisableController Controller,
+        ILinearisableController? Controller,
         double[] GravityTorqueNm,
         double[] StallTorqueNm,
         double[] TorqueUsagePercent,
@@ -135,6 +139,9 @@ public sealed class LabState
             ? "Custom"
             : (ControlMethod == ControlMethod.CT && IntegralEnabled ? "CT+I" : ControlMethod.ToString());
 
+    /// <summary>Column labels of the gain table: Kp, Kd, Ki, or Λ, k1, k2 for STSMC.</summary>
+    public string GainLabel(int column) => IsSuperTwisting ? (column switch { 0 => "Λ", 1 => "k1", _ => "k2" }) : (column switch { 0 => "Kp", 1 => "Kd", _ => "Ki" });
+
     public void SetControllerByKey(string key, bool loadDefaultGains = true)
     {
         CustomControllerError = null;
@@ -160,6 +167,11 @@ public sealed class LabState
                 UseCustomController = false;
                 ControlMethod = ControlMethod.CT;
                 IntegralEnabled = true;
+                break;
+            case "STSMC":
+                UseCustomController = false;
+                ControlMethod = ControlMethod.STSMC;
+                IntegralEnabled = false;
                 break;
             case "Custom":
                 UseCustomController = true;
@@ -209,6 +221,16 @@ public sealed class LabState
                 Kp[i] = PdGravity.DefaultGains.Kp[i];
                 Kd[i] = PdGravity.DefaultGains.Kd[i];
             }
+        }
+        else if (ControlMethod == ControlMethod.STSMC)
+        {
+            for (var i = 0; i < 4; i++)
+            {
+                Kp[i] = SuperTwistingSlidingMode.DefaultGains.Lambda[i];
+                Kd[i] = SuperTwistingSlidingMode.DefaultGains.K1[i];
+                Ki[i] = SuperTwistingSlidingMode.DefaultGains.K2[i];
+            }
+            BoundaryLayer = 0.0;
         }
         else if (ControlMethod == ControlMethod.CT && !IntegralEnabled)
         {
@@ -275,6 +297,13 @@ public sealed class LabState
         if (s.Controller.Kp is JointVector kp) kp.CopyTo(Kp);
         if (s.Controller.Kd is JointVector kd) kd.CopyTo(Kd);
         if (s.Controller.Ki is JointVector ki) ki.CopyTo(Ki);
+        if (ControlMethod == ControlMethod.STSMC)
+        {
+            if (s.Controller.Lambda is JointVector lambda) lambda.CopyTo(Kp);
+            if (s.Controller.K1 is JointVector k1) k1.CopyTo(Kd);
+            if (s.Controller.K2 is JointVector k2) k2.CopyTo(Ki);
+            BoundaryLayer = s.Controller.BoundaryLayer;
+        }
 
         Knowledge = s.Belief.Knowledge;
         UseBeliefPayloadOverride = s.Belief.PayloadKg.HasValue;
@@ -336,6 +365,7 @@ public sealed class LabState
         var kiVector = (ControlMethod == ControlMethod.PID || (ControlMethod == ControlMethod.CT && IntegralEnabled))
             ? JointVector.From(Ki)
             : (JointVector?)null;
+        var superTwisting = ControlMethod == ControlMethod.STSMC;
 
         return new Scenario
         {
@@ -368,9 +398,13 @@ public sealed class LabState
                 Method = ControlMethod,
                 IntegralEnabled = ControlMethod == ControlMethod.CT && IntegralEnabled,
                 PredictHalfSample = PredictHalfSample,
-                Kp = JointVector.From(Kp),
-                Kd = JointVector.From(Kd),
-                Ki = kiVector
+                Kp = superTwisting ? null : JointVector.From(Kp),
+                Kd = superTwisting ? null : JointVector.From(Kd),
+                Ki = kiVector,
+                Lambda = superTwisting ? JointVector.From(Kp) : null,
+                K1 = superTwisting ? JointVector.From(Kd) : null,
+                K2 = superTwisting ? JointVector.From(Ki) : null,
+                BoundaryLayer = superTwisting ? BoundaryLayer : 0.0
             },
             Belief = new BeliefSettings
             {
@@ -588,6 +622,11 @@ public sealed class LabState
             }
         }
 
+        if (IsSuperTwisting && (!double.IsFinite(BoundaryLayer) || BoundaryLayer < 0))
+        {
+            ValidationErrors["BoundaryLayer"] = "Sınır tabakası ε, 0 veya daha büyük sonlu bir sayı olmalıdır (0 = saf süper-twisting).";
+        }
+
         if (!double.IsFinite(StepSeconds) || StepSeconds < Sim.MinStep || StepSeconds > Sim.MaxStep)
         {
             ValidationErrors["Step"] = "RK4 adım boyu h, 0,1 ms ile 5,0 ms arasında olmalıdır.";
@@ -684,7 +723,7 @@ public sealed class LabState
     }
 
     private string GetCoreStabilityKey() => FormattableString.Invariant(
-        $"{PlanetKey}|{(PlanetKey == Planet.CustomKey ? CustomGravity : 0.0):R}|{TaskKind == TaskKind.PickPlace}|{PayloadKg:R}|{StartQ[0]:R}|{StartQ[1]:R}|{StartQ[2]:R}|{StartQ[3]:R}|{ControlMethod}|{IntegralEnabled}|{PredictHalfSample}|{Kp[0]:R}|{Kp[1]:R}|{Kp[2]:R}|{Kp[3]:R}|{Kd[0]:R}|{Kd[1]:R}|{Kd[2]:R}|{Kd[3]:R}|{UseBeliefPayloadOverride}|{BeliefPayloadKg:R}|{UseBeliefGravityOverride}|{BeliefGravity:R}|{BeliefMassScale:R}");
+        $"{PlanetKey}|{(PlanetKey == Planet.CustomKey ? CustomGravity : 0.0):R}|{TaskKind == TaskKind.PickPlace}|{PayloadKg:R}|{StartQ[0]:R}|{StartQ[1]:R}|{StartQ[2]:R}|{StartQ[3]:R}|{ControlMethod}|{IntegralEnabled}|{PredictHalfSample}|{UseCustomController}|{Kp[0]:R}|{Kp[1]:R}|{Kp[2]:R}|{Kp[3]:R}|{Kd[0]:R}|{Kd[1]:R}|{Kd[2]:R}|{Kd[3]:R}|{UseBeliefPayloadOverride}|{BeliefPayloadKg:R}|{UseBeliefGravityOverride}|{BeliefGravity:R}|{BeliefMassScale:R}");
 
     private string GetFullStabilityKey() => FormattableString.Invariant(
         $"{GetCoreStabilityKey()}|{StepSeconds:R}|{SamplePeriodSeconds:R}");
@@ -724,15 +763,17 @@ public sealed class LabState
                     safeKi[i] = double.IsFinite(Ki[i]) && Ki[i] >= 0 ? Ki[i] : 0.0;
                 }
 
-                ILinearisableController controller = ControlMethod switch
+                // STSMC has no linearisation at s = 0 (docs/DECISIONS.md D13): no sampled-loop analysis.
+                ILinearisableController? controller = ControlMethod switch
                 {
                     ControlMethod.PID => new Pid(belief, new PidGains(safeKp, safeKi, safeKd)),
                     ControlMethod.PDG => new PdGravity(belief, new PdGains(safeKp, safeKd)),
+                    ControlMethod.STSMC => null,
                     _ => new ComputedTorque(belief, new PdGains(safeKp, safeKd), PredictHalfSample,
                         IntegralEnabled ? safeKi : null)
                 };
 
-                var maxStableTs = SampledLoopStability.MaxStableSamplePeriod(system, controller, StartQ);
+                var maxStableTs = controller is null ? double.NaN : SampledLoopStability.MaxStableSamplePeriod(system, controller, StartQ);
 
                 // 3. Torque budget at the start pose
                 var budgetPayload = Math.Clamp(double.IsFinite(PayloadKg) ? PayloadKg : 0.0, 0.0, 0.5);
@@ -771,8 +812,8 @@ public sealed class LabState
             var tsForEval = double.IsFinite(SamplePeriodSeconds) && SamplePeriodSeconds > 0
                 ? SamplePeriodSeconds
                 : ControlLoop.DefaultSamplePeriod;
-            var rho = SampledLoopStability.SpectralRadius(core.System, core.Controller, StartQ, tsForEval);
-            var sampledLoopUnstable = !double.IsFinite(rho) || rho >= 1.0;
+            var rho = core.Controller is null ? double.NaN : SampledLoopStability.SpectralRadius(core.System, core.Controller, StartQ, tsForEval);
+            var sampledLoopUnstable = core.Controller is not null && (!double.IsFinite(rho) || rho >= 1.0);
             var excludesIntegral = ControlMethod == ControlMethod.PID || (ControlMethod == ControlMethod.CT && IntegralEnabled);
 
             return new StabilityAnalysis(
@@ -786,6 +827,7 @@ public sealed class LabState
                 MaxStableSamplePeriodSeconds: core.MaxStableSamplePeriodSeconds,
                 SampledLoopUnstable: sampledLoopUnstable,
                 ExcludesIntegralNote: excludesIntegral,
+                NotLinearisable: core.Controller is null,
                 GravityTorqueNm: core.GravityTorqueNm,
                 StallTorqueNm: core.StallTorqueNm,
                 TorqueUsagePercent: core.TorqueUsagePercent,
@@ -806,6 +848,8 @@ public sealed class LabState
 
     public ILinearisableController BuildLinearisableController(ControllerBelief? beliefOverride = null)
     {
+        if (ControlMethod == ControlMethod.STSMC)
+            throw new InvalidOperationException("STSMC doğrusallaştırılamaz (s = 0'da |s|^½ türevlenemez).");
         var belief = beliefOverride ?? BuildControllerBeliefSafe();
         var safeKp = new double[4];
         var safeKd = new double[4];
@@ -874,6 +918,7 @@ public sealed class LabState
         MaxStableSamplePeriodSeconds: double.PositiveInfinity,
         SampledLoopUnstable: false,
         ExcludesIntegralNote: false,
+        NotLinearisable: false,
         GravityTorqueNm: new double[4],
         StallTorqueNm: [4.1, 4.1, 4.1, 4.1],
         TorqueUsagePercent: new double[4],

@@ -315,11 +315,12 @@
                 <option value="PDG">PDG (PD + Yerçekimi Telafisi)</option>
                 <option value="CT">CT (Hesaplanmış Tork)</option>
                 <option value="CT+I">CT+I (İntegralli Hesaplanmış Tork)</option>
+                <option value="STSMC">Süper-twisting kayan kipli (STSMC)</option>
                 <option value="Custom">Kendi kontrolcün (JavaScript)</option>
             </select>
         </div>
 
-        @if (!State.UseCustomController && State.ControlMethod == ControlMethod.CT)
+        @if (!State.UseCustomController && State.ControlMethod is ControlMethod.CT or ControlMethod.STSMC)
         {
             <div class="field-row">
                 <label class="field-label" for="ct-mode-select">CT Model Değerlendirme</label>
@@ -380,11 +381,11 @@
                 <thead>
                     <tr>
                         <th>Eklem</th>
-                        <th>Kp <small>(@KpUnit)</small></th>
-                        <th>Kd <small>(@KdUnit)</small></th>
+                        <th>@State.GainLabel(0) <small>(@KpUnit)</small></th>
+                        <th>@State.GainLabel(1) <small>(@KdUnit)</small></th>
                         @if (ShowKi)
                         {
-                            <th>Ki <small>(@KiUnit)</small></th>
+                            <th>@State.GainLabel(2) <small>(@KiUnit)</small></th>
                         }
                     </tr>
                 </thead>
@@ -418,6 +419,17 @@
             </table>
         </div>
         @RenderError("Gains")
+        @if (State.IsSuperTwisting)
+        {
+            <div class="field-row">
+                <label class="field-label" for="stsmc-epsilon">Sınır tabakası ε <small>(rad/s; 0 = saf süper-twisting, ε &gt; 0 için sign(s) yerine s/(|s| + ε))</small></label>
+                <input id="stsmc-epsilon" type="text" inputmode="decimal" class="form-input"
+                       value="@LabFormat.Input(State.BoundaryLayer)"
+                       @onchange="OnBoundaryLayerChanged" />
+            </div>
+            <div class="scenario-desc">s = ė + Λe, u = M̂(q̈_d + Λė + v) + ĥ + τ̂f, v = k1·|s|^½·sign(s) + w, ẇ = k2·sign(s). Doğrusallaştırılamaz: Analiz sayfası bu kontrolcü için kapalıdır.</div>
+            @RenderError("BoundaryLayer")
+        }
     </div>
 
     <!-- 5. Kontrolcü İnanç Modeli -->
@@ -526,10 +538,16 @@
 
     protected override bool ShouldRender() => !IsRunning;
 
-    private bool ShowKi => State.ControlMethod == ControlMethod.PID || (State.ControlMethod == ControlMethod.CT && State.IntegralEnabled);
-    private string KpUnit => State.ControlMethod == ControlMethod.CT ? "1/s²" : "N·m/rad";
-    private string KdUnit => State.ControlMethod == ControlMethod.CT ? "1/s" : "N·m·s/rad";
-    private string KiUnit => State.ControlMethod == ControlMethod.CT ? "1/s³" : "N·m/(rad·s)";
+    private bool ShowKi => State.ControlMethod == ControlMethod.PID || State.IsSuperTwisting || (State.ControlMethod == ControlMethod.CT && State.IntegralEnabled);
+    private string KpUnit => State.IsSuperTwisting ? "1/s" : State.ControlMethod == ControlMethod.CT ? "1/s²" : "N·m/rad";
+    private string KdUnit => State.IsSuperTwisting ? "rad^½/s^³⁄²" : State.ControlMethod == ControlMethod.CT ? "1/s" : "N·m·s/rad";
+    private string KiUnit => State.IsSuperTwisting ? "rad/s³" : State.ControlMethod == ControlMethod.CT ? "1/s³" : "N·m/(rad·s)";
+
+    private async Task OnBoundaryLayerChanged(ChangeEventArgs e)
+    {
+        State.BoundaryLayer = LabFormat.TryParseInvariant(e.Value?.ToString(), out var v) ? v : double.NaN;
+        await NotifyChanged();
+    }
 
     private bool HasError(string key) => State.ValidationErrors.ContainsKey(key);
 

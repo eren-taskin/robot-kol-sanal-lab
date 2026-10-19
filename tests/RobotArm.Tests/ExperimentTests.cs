@@ -35,9 +35,9 @@ public sealed class ExperimentTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Library_AllEightOutcomesMatchTheirExplanations()
+    public void Library_AllNineOutcomesMatchTheirExplanations()
     {
-        Assert.Equal(8, ScenarioLibrary.All.Count);
+        Assert.Equal(9, ScenarioLibrary.All.Count);
         foreach (var s in ScenarioLibrary.All)
         {
             Assert.False(string.IsNullOrWhiteSpace(s.Description));
@@ -73,7 +73,7 @@ public sealed class ExperimentTests(ITestOutputHelper output)
     [Fact]
     public void V29_CtIntegral_RemovesForgottenPayloadFinalError_AfterHold()
     {
-        var s = ScenarioLibrary.All.Single(s => s.Name.StartsWith("Yanlış model –", StringComparison.Ordinal)) with { Duration = 1.5 };
+        var s = ScenarioLibrary.All.Single(s => s.Name == "Yanlış model – CT, 0,3 kg habersiz yük") with { Duration = 1.5 };
         var ct = new ExperimentRunner().Run(s);
         var integral = new ExperimentRunner().Run(s with { Controller = s.Controller with { IntegralEnabled = true } });
         var retunedCt = new ExperimentRunner().Run(s with { Controller = s.Controller with

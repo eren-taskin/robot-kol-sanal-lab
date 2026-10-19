@@ -308,6 +308,7 @@ All controllers implement one interface: given time, measured q and q̇, and the
 | PDG | PD + gravity compensation | u = Kp e + Kd ė + ĝ(q), clamped |
 | CT | Computed torque | u = M̂(q̄)(q̈_d + Kd ė + Kp e) + ĥ(q̄, q̄̇) + τ̂f(q̄̇), clamped. τ̂f is the friction of §5.4 with the belief's parameters. (q̄, q̄̇) is the measured state predicted to the middle of the hold: with a = q̈_d + Kd ė + Kp e and Δt the time since the previous sample, q̄ = q + q̇·Δt/2 + a·Δt²/8, q̄̇ = q̇ + a·Δt/2. The prediction is an option, on by default; without it q̄ = q and q̄̇ = q̇, the textbook law. |
 | CT+I | Optional integral computed torque | Same CT law and prediction, with a = q̈_d + Kd ė + Kp e + Ki ∫e. Off by default. Candidate rectangle integral uses elapsed sample time (zero at the first sample); a joint whose candidate output is clamped keeps its old integral, as in PID. |
+| STSMC | Super-twisting sliding mode (S1) | s = ė + Λe; u = M̂(q̄)(q̈_d + Λė + v) + ĥ(q̄, q̄̇) + τ̂f(q̄̇), clamped; v = k1·\|s\|^½·sign(s) + w, ẇ = k2·sign(s), integrated once per sample with the elapsed time (w ← w + Δt·k2·sign(s), nothing at the first sample). Mid-hold prediction exactly as CT, with a = q̈_d + Λė + v (on by default). A joint whose output is clamped keeps its old w, as CT+I. Optional boundary layer: sign(s) → s/(\|s\| + ε), ε ≥ 0 (default 0, the pure law). Not linearisable at s = 0: no K, no §12 analysis, no tuner. |
 | ADP | Adaptive (Slotine–Li), optional | estimates the payload mass online |
 
 e = q_d − q and ė = q̇_d − q̇ with the measured q and q̇. Hats mean the controller's own model (Section 5.6). Gains are per joint (diagonal matrices).
@@ -332,6 +333,9 @@ Linearised at rest at q0 with the constant reference q_d = q0 (used by §6.3), e
 | CT+I Kp | 3600 | 3600 | 3600 | 3600 | 1/s² (ωn = 60 rad/s) |
 | CT+I Kd | 360 | 360 | 360 | 360 | 1/s (ζ = 3) |
 | CT+I Ki | 10000 | 10000 | 10000 | 10000 | 1/s³ |
+| STSMC Λ | 20 | 20 | 20 | 20 | 1/s |
+| STSMC k1 = 1.5√L | 14.53 | 14.53 | 21.16 | 47.74 | rad^½/s^{3/2} |
+| STSMC k2 = 1.1L | 103.2 | 103.2 | 218.9 | 1114.3 | rad/s³ |
 
 **Measured with these gains** (T07, A1c; perfect sensor, default h = 0.5 ms and Ts = 2 ms). Settling time in s for A→B / B→A; C = the controller clamped its output; F = fault (§6.4); ">2" = not settled after 2 s.
 
@@ -362,6 +366,8 @@ The smallest MaxStableTs for PID/PDG, 6.5 ms at pose A without payload, is set b
 
 **CT and CT+I robustness (T08, A1b, A1c, D8, D9).** With the original T07 plain CT defaults (Kp = 144 1/s², Kd = 24 1/s), the unloaded wrist at Pose B in Orbit had only 0.34 dB gain margin and 15.91° phase margin (and 10.31° on joint 3 at HighG, 0.5 kg, reach start pose) because P44·Kd = 0.0139 < d4 = 0.21 N·m·s/rad left the net linearised velocity feedback negative (friction cancellation dominating Kd). Retuning plain CT in A1c to Kp = [1600, 1600, 1800, 1800] 1/s² and Kd = [350, 350, 350, 350] 1/s gives ρ ≤ 0.9908 < 1, gain margin ≥ 7.19 dB ([9.15, 9.36, 10.75, 7.19] dB worst case per joint) and phase margin ≥ 62.51° ([69.24°, 71.83°, 89.68°, 62.51°] worst case per joint) across all five planets, payloads 0 and 0.5 kg, and all library scenario start poses. Enabling CT+I in a scenario selects the separately tuned defaults above (Kp = 3600 1/s², Kd = 360 1/s, Ki = 10000 1/s³), unless gains are explicitly supplied: across the same 30 cases its 12-state augmented closed loop (§12.2) has ρ ≤ 0.9898 < 1, loop-at-a-time gain margin ≥ 7.43 dB (≥ 6 dB) and phase margin ≥ 46.57° (≥ 40°) on every joint (9.21 dB and 51.94° on the wrist at the reach start pose). In V18(b), with plant 0.3 kg and belief 0 kg, the same 1 s quintic and 0.5 s hold (end t = 1.5 s) give maximum final joint errors: ordinary CT **0.5542987672 rad**, CT+I **0.0069754717 rad** (< 1e-2), and CT with CT+I's Kp/Kd but Ki = 0 **0.3376327568 rad**. All are fault-free. Peak errors over the run are 0.559830798 rad for ordinary CT and 0.2483847706 rad for CT+I: this is rejection of a persistent disturbance, not elimination of the initial transient. The library runs the same move to 10 s to demonstrate task-level settling (settling at 1.28 s). The PD-only linearisation of §6.3 excludes the integral state, whereas §12.2–§12.4 include it.
 
+**STSMC gains (S1, docs/DECISIONS.md D13).** With an exact model the inner loop gives ṡ = −v; a wrong model adds the perturbation δ = M̂⁻¹(τ − ĥ − τ̂f) − q̈ (zero with an exact model). L bounds |δ̇|. It was measured for "0,3 kg habersiz yük" (plant 0.3 kg, belief 0 kg) on the library path (V29: 1 s quintic [0, −0.4, −0.3, 1.1] → [0, 0.1, −0.8, 0.6] rad, hold to 1.5 s, Earth, Ts = 2 ms) with δ evaluated on the reference with the torque the true plant needs to follow it (δ = M̂⁻¹[(M − M̂)q̈_d + h − ĥ], the equivalent control w must supply on s = 0), L = max \|Δδ\|/Ts: **L = [0, 93.79, 198.96, 1013.00] rad/s³**; joint 1 does not move on this path, so it takes joint 2's value. Then k1 = 1.5√L, k2 = 1.1L (table above). The same δ taken from the closed-loop log (true state, applied τ, true q̈) also contains the part proportional to the command, (I − M⁻¹M̂)·a: from the CT+I run it gives [0, 2957, 4695, 33336] rad/s³. Measured on that path (`docs/results/stsmc_comparison.csv`): with the underestimate the standard gains let the wrist sag into its upper limit (JointLimit fault on joint 4 at 0.2475 s; wrist RMS while moving 3.3 × CT+I's), because \|δ4(0)\| ≈ 1500 rad/s² is already present at t = 0 and w4 builds up only at k2 = 1114 rad/s³; with the overestimate STSMC never clamps and its largest RMS error while moving is 0.0146 rad against CT+I's 0.733 rad (CT and CT+I clamp in 98–99 % of the samples).
+
 ## 8. References, tasks and scenarios
 
 ### 8.1 Trajectories
@@ -385,7 +391,7 @@ Hold applies a configurable external joint torque pulse **after motor saturation
 
 ### 8.3 Scenario
 
-A `Scenario` record contains environment (including custom g), payload, task geometry and timing, controller and optional gain overrides, independent belief (g, body mass/inertia scale, initial payload), h, Ts, sensor options, seed, duration, Turkish name and explanation. Null gain overrides select the documented law-specific defaults; a null belief g/payload selects the initial true value. `ScenarioJson` uses System.Text.Json with named enums, vector support and validation. Record/value data cannot retain caller-owned mutable arrays.
+A `Scenario` record contains environment (including custom g), payload, task geometry and timing, controller (`PID`, `PDG`, `CT`, `STSMC`) and optional gain overrides (STSMC: `Lambda`, `K1`, `K2`, `BoundaryLayer`), independent belief (g, body mass/inertia scale, initial payload), h, Ts, sensor options, seed, duration, Turkish name and explanation. Null gain overrides select the documented law-specific defaults; a null belief g/payload selects the initial true value. `ScenarioJson` uses System.Text.Json with named enums, vector support and validation. Record/value data cannot retain caller-owned mutable arrays.
 
 Payload knowledge is selectable: **Informed** updates the controller's payload belief at PickPlace attachment/release, without resetting integral or sample history; **Unaware** retains its initial payload belief throughout. Other belief parameters never change. PickPlace's plant initially has no payload; the scenario's payload is the object mass. Other tasks start with that payload attached.
 
@@ -393,7 +399,7 @@ Duration must be finite, in **(0, 60] simulated seconds**, and an integer multip
 
 `ExperimentRunner.Run(scenario)` and `Start(scenario)`, `AdvanceBy(simSeconds)`, `Current`, `IsFinished` use the same state machine. Start computes the t=0 sample. AdvanceBy accumulates fractional h remainders across calls and advances whole h steps only, never beyond duration; zero is a no-op and invalid/nonfinite increments are rejected. Current is an allocation-free state snapshot for animation; Log is a read-only live view and Result is available on completion. Restarting creates new storage, preserving prior results. No wall clock or UI dependency enters Core.
 
-ScenarioLibrary provides eight Turkish-named experiments (tested against their declared outcomes): Dünya – boş kol – noktaya git; Ay – 0,3 kg – al ve bırak; Mars – çember izleme; Yüksek g – 0,5 kg – tutma (doyum); Yörünge – noktaya git; Yanlış model – CT, 0,3 kg habersiz yük; Yanlış model düzeltildi – CT+I, 0,3 kg habersiz yük; Örnekleme – Ts sınırına yakın. The last uses exactly 0.9 × MaxStableTs at its initial pose, with h chosen to divide Ts and a small disturbance at that pose. Explanations state the expected successes and the overload/model-mismatch failures.
+ScenarioLibrary provides nine Turkish-named experiments (tested against their declared outcomes): Dünya – boş kol – noktaya git; Ay – 0,3 kg – al ve bırak; Mars – çember izleme; Yüksek g – 0,5 kg – tutma (doyum); Yörünge – noktaya git; Yanlış model – CT, 0,3 kg habersiz yük; Yanlış model düzeltildi – CT+I, 0,3 kg habersiz yük; Yanlış model – STSMC, 0,3 kg habersiz yük (expected to fail: wrist joint-limit fault, D13); Örnekleme – Ts sınırına yakın. The last uses exactly 0.9 × MaxStableTs at its initial pose, with h chosen to divide Ts and a small disturbance at that pose. Explanations state the expected successes and the overload/model-mismatch failures.
 
 ## 9. Metrics
 
@@ -483,9 +489,21 @@ Added in A1 (linear analysis, §12):
 | V42 | Gain tuner: optimises over a scenario or a list of scenarios (`Sum` or `Max` cost), optionally evaluating each candidate with both perfect and encoder sensors (`PerfectAndEncoder`), with minimum gain margin and phase margin enforced as hard constraints via `LoopFrequencyResponse` at each scenario's start pose; tuning on "Dünya – boş kol – noktaya git" with both sensors (10 evaluations in the normal suite, 60 evaluations in the Report category) gives gains that pass that scenario with the encoder; same seed gives the same history; cancellation returns the evaluations done | §12.7 |
 | V43 | Report category (excluded from CI): every analysis call on the arm (except the tuner) takes less than 50 ms natively, median of 7 warm calls | §12.8 |
 
+Added in S1 (STSMC, D13):
+
+| # | Test | Source |
+|---|---|---|
+| V44 | 1-DOF double integrator (J = 0.02 kg·m², d/J = 5 sin 2t, L = 10 rad/s³, Λ = 5, standard k1, k2): max \|s\| over 3–6 s shrinks with Ts; halving Ts from 2 to 1 ms divides it by 3–5 (O(Ts²); measured 4.016) | §7 |
+| V45 | Exact belief: STSMC (default gains, mid-hold prediction) tracks the V18 quintic within 1e-3 rad without clamping or fault (measured 1.43e-4 rad; 1.28e-4 rad without prediction) | §7 |
+| V46 | Underestimate (plant 0.3 kg, belief 0 kg), V29 path: CT+I fault-free; STSMC (ε = 0 and ε = 0.5) faults at a joint limit on joint 4 before 0.5 s and its wrist RMS error while moving is more than 2 × CT+I's (measured 3.3 × and 3.6 ×) | §7 |
+| V47 | Overestimate (plant 0 kg, belief 0.3 kg): STSMC (ε = 0 and 0.5) fault-free, never clamped, peak \|u\| < 3.5 N·m, largest RMS error while moving < 10 % of CT+I's (measured 2.0 % and 1.2 %); CT/CT+I faults not asserted (D11) | §7 |
+| V48 | STSMC Compute and normal runner steps allocate nothing; JSON round trip; same seed → identical logs, different seed → different log; law against closed-form M, g, C; w once per sample; anti-windup; not an `ILinearisableController`, the tuner refuses it; default k1, k2 = standard choice for the measured L [0.2 %] | §7, §12 |
+
 Optional V20: cross-check against MuJoCo using the same URDF and the same torque input (Python, outside the C# solution).
 
 ## 12. Linear analysis
+
+STSMC (§7) is not linearisable at s = 0 (\|s\|^½ has an infinite slope there), so nothing in this section applies to it: it does not implement `ILinearisableController`, `GainTuner` throws `NotSupportedException` for it, and the Web analysis page shows "Bu kontrolcü doğrusallaştırılamaz; kök yer eğrisi ve Bode uygulanamaz" instead of its panels.
 
 A toolkit in `RobotArm.Core/Analysis` (task A1) for the student to study the sampled loop as a linear system: poles, root locus, frequency response, a linear step response to overlay on a run, LQR, and a gain tuner. It uses the linearisation of §6.3 (`LinearSystem.ArmAtRest`, Φ and Γ by RK4 sub-steps, the effective gains of §7). No package is used; `System.Numerics.Complex` is. The calls allocate; they are analysis, not once per step. Decisions and measurements are in `docs/DECISIONS.md` D9.
 

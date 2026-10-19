@@ -163,6 +163,10 @@ public sealed class ExperimentRunner
             ControlMethod.PDG => new PdGravity(belief, new PdGains(kp, kd)),
             ControlMethod.CT => new ComputedTorque(belief, new PdGains(kp, kd), c.PredictHalfSample,
                 c.IntegralEnabled ? c.Ki?.ToArray() ?? ComputedTorque.DefaultIntegralGains.ToArray() : null),
+            ControlMethod.STSMC => new SuperTwistingSlidingMode(belief, new SuperTwistingGains(
+                c.Lambda?.ToArray() ?? SuperTwistingSlidingMode.DefaultGains.Lambda.ToArray(),
+                c.K1?.ToArray() ?? SuperTwistingSlidingMode.DefaultGains.K1.ToArray(),
+                c.K2?.ToArray() ?? SuperTwistingSlidingMode.DefaultGains.K2.ToArray()), c.BoundaryLayer, c.PredictHalfSample),
             _ => throw new ArgumentOutOfRangeException(nameof(c))
         };
     }
@@ -187,6 +191,7 @@ public sealed class ExperimentRunner
                 if (_controller is ComputedTorque ct) ct.SetPayloadBelief(payload);
                 else if (_controller is PdGravity pdg) pdg.SetPayloadBelief(payload);
                 else if (_controller is Pid pid) pid.SetPayloadBelief(payload);
+                else if (_controller is SuperTwistingSlidingMode st) st.SetPayloadBelief(payload);
             }
         }
         _task.Evaluate(t, _qRef, _vRef, _aRef);

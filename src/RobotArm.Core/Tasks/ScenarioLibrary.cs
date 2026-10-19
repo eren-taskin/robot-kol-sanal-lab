@@ -3,7 +3,7 @@ using RobotArm.Core.Model;
 
 namespace RobotArm.Core.Tasks;
 
-/// <summary>Eight reproducible teaching experiments with Turkish explanations. SPEC §8.3.</summary>
+/// <summary>Nine reproducible teaching experiments with Turkish explanations. SPEC §8.3.</summary>
 public static class ScenarioLibrary
 {
     /// <summary>Read-only library; every expected outcome is verified by tests. SPEC §8.3.</summary>
@@ -40,6 +40,7 @@ public static class ScenarioLibrary
             reach with { Name = "Yörünge – noktaya git", PlanetKey = "Orbit", Description = "PDG hedefe başarıyla ulaşır; yerçekimi olmadığından g telafisi sıfırdır ve etkisizdir." },
             mismatch with { Name = "Yanlış model – CT, 0,3 kg habersiz yük", ExpectedSuccess = false, Description = "Yükten habersiz CT'nin bileği sarkar; kalıcı hata yüzünden hedefe ulaşma başarısız olur." },
             mismatch with { Name = "Yanlış model düzeltildi – CT+I, 0,3 kg habersiz yük", Controller = new ControllerSettings { IntegralEnabled = true }, Description = "CT+I, 0,3 kg yükten habersiz olsa da integral ile kalıcı hatayı giderip hedefe başarıyla ulaşır." },
+            mismatch with { Name = "Yanlış model – STSMC, 0,3 kg habersiz yük", Controller = new ControllerSettings { Method = ControlMethod.STSMC }, ExpectedSuccess = false, Description = "Standart kazançlı STSMC (k1 = 1,5√L, k2 = 1,1L) habersiz 0,3 kg yükte bileği yeterince hızlı toparlayamaz; bilek eklem sınırına çarpar ve görev başarısız olur." },
             NearSamplingLimit()
         ];
     }
