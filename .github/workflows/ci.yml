@@ -25,3 +25,19 @@ jobs:
         run: |
           dotnet workload install wasm-tools
           dotnet publish src/RobotArm.Web --configuration Release
+
+  # W1: lean Windows Forms laboratory core (lab/). The old core is referenced by the tests as an oracle only.
+  lab-build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Build lab
+        run: dotnet build lab/RobotArmLab.sln --configuration Release
+
+      - name: Test lab
+        run: dotnet test lab/RobotArmLab.sln --configuration Release --no-build
