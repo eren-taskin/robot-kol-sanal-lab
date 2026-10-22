@@ -6,8 +6,9 @@ namespace RobotArmLab.Core.Dynamics;
 
 /// <summary>
 /// Kütle (eylemsizlik) matrisi M(q) ve onun eklem açılarına göre türevi ∂M/∂q, raporun kapalı formlarıyla
-/// (eş. (14)–(17), SPEC §5.3). M, kinetik enerjiyi verir: T = ½ q̇ᵀ M(q) q̇. Taban eklemi (q1) eğim
-/// eklemleriyle kütle matrisinde bağlaşmaz: M1k = 0 (k = 2, 3, 4).
+/// (SPEC §5.3): m11 eş. (14), ρ_i eş. (15), h, k23, k24, k34 eş. (16), eğim bloğu M22..M44 eş. (17).
+/// M, kinetik enerjiyi verir: T = ½ q̇ᵀ M(q) q̇. Taban eklemi (q1) eğim eklemleriyle kütle matrisinde
+/// bağlaşmaz: M1k = 0 (k = 2, 3, 4).
 /// </summary>
 public static class MassMatrixFormulas
 {
@@ -17,9 +18,9 @@ public static class MassMatrixFormulas
     public static double[,] Compute(ArmParameters p, double[] q)
     {
         double[,] m = new double[4, 4];
-        m[0, 0] = YawInertia(p, q);                            // eş. (14)–(17): m11
-        double[] k = CouplingTerms(p, q);
-        FillPitchBlock(m, p, k[0], k[1], k[2], k[3]);          // eş. (14)–(17): eğim bloğu
+        m[0, 0] = YawInertia(p, q);                            // eş. (14): m11
+        double[] k = CouplingTerms(p, q);                      // eş. (16): h, k23, k24, k34
+        FillPitchBlock(m, p, k[0], k[1], k[2], k[3]);          // eş. (17): eğim bloğu M22..M44
         // M12 = M13 = M14 = 0: taban dönüşü eğim eklemleriyle bağlaşmaz. Dizi sıfırla başladığı için yazılmaz.
 
         for (int i = 0; i < 4; i++)
@@ -50,7 +51,7 @@ public static class MassMatrixFormulas
         return dM;
     }
 
-    // m11 = Σ [ m ρ² + Ixx sin²θ + Izz cos²θ − 2 Ixz sin θ cos θ ], kg·m².
+    // Eş. (14): m11 = Σ [ m ρ² + Ixx sin²θ + Izz cos²θ − 2 Ixz sin θ cos θ ], kg·m². ρ_i eş. (15).
     private static double YawInertia(ArmParameters p, double[] q)
     {
         double[] t = ForwardKinematics.Thetas(q);
@@ -80,7 +81,7 @@ public static class MassMatrixFormulas
         return sum;
     }
 
-    // ∂ρ_i/∂q_k, m/rad. ρ_i, kendinden önceki uzuvların payları ile kendi kütle merkezinin payının toplamıdır.
+    // ∂ρ_i/∂q_k, m/rad. ρ_i (eş. (15)), kendinden önceki uzuvların payları ile kendi kütle merkezinin payının toplamıdır.
     private static double RadiusDerivative(ArmParameters p, double[] t, int i, int k)
     {
         double d = 0.0;
@@ -99,7 +100,7 @@ public static class MassMatrixFormulas
         return k >= 1 && k <= i;
     }
 
-    // Bağlaşım terimleri [h, k23, k24, k34], m² (SPEC §5.3). Kütleyle çarpılınca kg·m² olur.
+    // Eş. (16): bağlaşım terimleri [h, k23, k24, k34], m² (SPEC §5.3). Kütleyle çarpılınca kg·m² olur.
     private static double[] CouplingTerms(ArmParameters p, double[] q)
     {
         double b = p.BetaRad, e3 = p.ComAngleRad[2], e4 = p.ComAngleRad[3];
@@ -122,7 +123,7 @@ public static class MassMatrixFormulas
         dk[3] = (k == 3) ? -p.L3M * l4 * Math.Sin(q[3] + e4) : 0.0;
     }
 
-    // Eğim bloğu M22..M44, kg·m² (simetrik). Eş. (14)–(17), SPEC §5.3 satır satır. J_i = Iyy_i.
+    // Eş. (17): eğim bloğu M22..M44, kg·m² (simetrik), SPEC §5.3 satır satır. J_i = Iyy_i.
     private static void FillPitchBlock(double[,] m, ArmParameters p, double h, double k23, double k24, double k34)
     {
         double J2 = p.IyyKgM2[1], J3 = p.IyyKgM2[2], J4 = p.IyyKgM2[3];

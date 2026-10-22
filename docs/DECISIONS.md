@@ -365,7 +365,7 @@ The `dotnet.native.wasm` grows from 2.9 MB to 15.0 MB because it now holds the c
 
 **Decision.** A new, small core in `lab/RobotArmLab.Core` (about 1,000 lines without comments), written for reading:
 
-- The dynamics are the report's closed forms for this arm only: M(q) entry by entry (eqs. 14–17), g(q) (eq. 18), ∂M/∂q derived by hand and c(q, q̇) from Christoffel symbols in a plain loop (eq. 13), friction (eq. 20), q̈ by a 4×4 Cholesky solve (`Numerics/Small4x4.cs`). No general chain algorithm; a 6-DOF arm would need new formulas. This departs from SPEC §5.2 on purpose.
+- The dynamics are the report's closed forms for this arm only: M(q) entry by entry (m11 eq. 14, ρ_i eq. 15, h, k23, k24, k34 eq. 16, pitch block eq. 17), g(q) (eq. 18), ∂M/∂q derived by hand and c(q, q̇) from Christoffel symbols in a plain loop (eq. 13), friction (eq. 20), q̈ by a 4×4 Cholesky solve (`Numerics/Small4x4.cs`). No general chain algorithm; a 6-DOF arm would need new formulas. This departs from SPEC §5.2 on purpose.
 - Plain C#: `double[]`, `double[,]` and `for` loops; no LINQ, records, generics other than `List<T>`, spans, reflection, async, events or pattern matching. Every class and public member has a Turkish `<summary>` (enforced: documentation warnings are errors). No file over 250 lines, no method over 40.
 - Allocation in the inner loop is accepted: clarity over speed. A 2 s RK4 run at h = 0.5 ms takes milliseconds.
 - Four solvers behind one interface (`IOdeSolver`): Euler, Heun, RK4, and Dormand–Prince with adaptive step (rtol/atol as in ode45), so the student can compare them on the same experiment.
@@ -375,3 +375,18 @@ The `dotnet.native.wasm` grows from 2.9 MB to 15.0 MB because it now holds the c
 **Names changed from the W1 task text.** The environment class is `GravityEnvironment`, not `Environment`, because `Environment` would clash with `System.Environment` in every Forms file. The 4×4 solver lives in `Numerics/`, not `Math/`, because a `RobotArmLab.Core.Math` namespace would hide `System.Math` inside the core.
 
 **Consequences.** The web application, the analysis toolkit (§12), scenarios and tasks (§8) stay in the old core, tagged `web-final`, and are not part of the Forms laboratory. Closed-loop controllers (computed torque, super-twisting) come in W3 behind `IController`; the Forms project comes in W2.
+
+## D15 – Forms laboratory: all behaviour in LabSession, window only wires (W2)
+
+**Context.** The Windows Forms application cannot be run or tested on macOS, where it is developed, and the instructor will ask students to explain any line of it.
+
+**Decision.**
+
+- Every testable behaviour lives in `lab/RobotArmLab.Core/Session/`: `LabSession` (settings, `Reset`, `Advance(wallClock)`, history, CSV), `SettingsValidator` (Turkish messages, never throws), `CsvExporter` (InvariantCulture). `MainForm` only copies control values into the session and draws its results; it contains no physics, kinematics or timing logic. The simulator receives copies of the parameters and inputs, so editing the PropertyGrid during a run changes nothing until Sıfırla.
+- A `System.Windows.Forms.Timer` (30 ms) drives the run; each tick passes the measured wall-clock time to `Advance`, which honours at most 0.25 s of it and at most 20,000 solver steps, dropping any backlog, so the UI cannot freeze. Simulated time per tick is wall clock × speed factor (0.25×–4×).
+- Dormand–Prince samples are taken every 5 ms (`DormandPrinceOutputIntervalS`); the step inside is chosen by the solver.
+- Plots: ScottPlot.WinForms 5.1.59. 3D: HelixToolkit.Wpf 3.1.2 in an `ElementHost`, created at run time inside try/catch; on failure the 3D panel is hidden and the GDI+ 2D side view remains. Both views draw only `ForwardKinematics.JointPositions`.
+- Target framework `net10.0-windows10.0.19041.0`, not plain `net10.0-windows`: ScottPlot.WinForms depends on SkiaSharp.Views.WindowsForms 3.119.0, whose only .NET build targets Windows 10.0.19041; with the plain TFM NuGet falls back to the .NET Framework build (NU1701).
+- No stability-hint label on the solver tab: W1 has no such API, and the task said to show none in that case.
+
+**Consequences.** CI builds the whole lab solution on `windows-latest`; the Linux job builds only core and tests. How the window looks and behaves is checked by hand with `docs/WINDOWS_KURULUM.md`, whose numbers come from `LabScenarioTests`. W3 adds closed-loop control to the reserved "Kontrol" tab.

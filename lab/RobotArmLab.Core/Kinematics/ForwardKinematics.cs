@@ -65,7 +65,7 @@ public static class ForwardKinematics
     }
 
     /// <summary>
-    /// Her uzvun kütle merkezinin dönme eksenine (z eksenine) yatay uzaklığı ρ_i, m. Rapor eş. (14)'teki
+    /// Her uzvun kütle merkezinin dönme eksenine (z eksenine) yatay uzaklığı ρ_i, m. Rapor eş. (15)'teki
     /// ρ1..ρ4 tanımları; m11 (taban eylemsizliği) bunlarla hesaplanır.
     /// </summary>
     public static double[] ComRadii(ArmParameters p, double[] q)

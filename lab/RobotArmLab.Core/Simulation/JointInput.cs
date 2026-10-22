@@ -26,6 +26,12 @@ public class JointInput
         Shape = InputShape.Constant;
     }
 
+    /// <summary>Aynı değerlerle yeni bir giriş nesnesi döndürür.</summary>
+    public JointInput Clone()
+    {
+        return (JointInput)MemberwiseClone();   // bütün alanlar sayı veya enum olduğundan sığ kopya yeterlidir
+    }
+
     /// <summary>t anındaki giriş değeri, N·m veya V.</summary>
     public double Value(double t)
     {

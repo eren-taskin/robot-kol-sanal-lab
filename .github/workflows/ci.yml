@@ -27,6 +27,7 @@ jobs:
           dotnet publish src/RobotArm.Web --configuration Release
 
   # W1: lean Windows Forms laboratory core (lab/). The old core is referenced by the tests as an oracle only.
+  # Linux builds and tests only the core and its tests; the Forms project is built on Windows below.
   lab-build-and-test:
     runs-on: ubuntu-latest
     steps:
@@ -36,7 +37,23 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: Build lab
+      - name: Build lab core and tests
+        run: dotnet build lab/RobotArmLab.Tests/RobotArmLab.Tests.csproj --configuration Release
+
+      - name: Test lab
+        run: dotnet test lab/RobotArmLab.Tests/RobotArmLab.Tests.csproj --configuration Release --no-build
+
+  # W2: the whole lab solution, including the Windows Forms application, on Windows.
+  lab-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Build lab solution (with Forms)
         run: dotnet build lab/RobotArmLab.sln --configuration Release
 
       - name: Test lab

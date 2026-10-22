@@ -25,7 +25,10 @@ public class ArmDynamics
         GravityMps2 = gravityMps2;
     }
 
-    /// <summary>Kütle matrisi M(q), kg·m². Rapor eş. (14)–(17). Ayrıntı <see cref="MassMatrixFormulas"/> sınıfında.</summary>
+    /// <summary>
+    /// Kütle matrisi M(q), kg·m². Rapor eş. (14) m11, (15) ρ_i, (16) h, k23, k24, k34, (17) eğim bloğu.
+    /// Ayrıntı <see cref="MassMatrixFormulas"/> sınıfında.
+    /// </summary>
     public double[,] MassMatrix(double[] q)
     {
         return MassMatrixFormulas.Compute(Parameters, q);
