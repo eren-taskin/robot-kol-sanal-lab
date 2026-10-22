@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using RobotArmLab.Core.Model;
 using RobotArmLab.Core.Simulation;
 
 namespace RobotArmLab.Core.Session;
@@ -11,8 +12,13 @@ namespace RobotArmLab.Core.Session;
 /// </summary>
 public static class ClosedLoopValidator
 {
-    /// <summary>Motor eyleyicisinde sabit adımlı çözücülerin en büyük adım boyu, s (zıt EMK sistemi sertleştirir).</summary>
-    public const double MaxMotorStepS = 0.0002;
+    // Motor eyleyicisinde sabit adımlı çözücülerin en büyük adım boyu, s (zıt EMK sistemi sertleştirir).
+    private const double MaxMotorStepS = 0.0002;
+
+    private const double MaxSamplePeriodS = 0.05;   // 50 ms; daha yavaş örneklemede hiçbir kontrolcü kolu tutamaz
+    private const int MinEncoderCounts = 16;         // tur başına; daha azı açı ölçümü sayılmaz
+    private const double RatioTolerance = 1e-6;      // Ts/h tam sayı mı denetiminde kayan nokta payı
+    private const double StepTolerance = 1e-12;      // h ≤ 0,2 ms denetiminde kayan nokta payı, s
 
     private static readonly CultureInfo Turkish = CultureInfo.GetCultureInfo("tr-TR");
 
@@ -36,7 +42,7 @@ public static class ClosedLoopValidator
     private static void CheckSampling(LabSession s, ClosedLoopSettings c, List<string> errors)
     {
         double ts = c.SamplePeriodS;
-        if (Bad(ts) || ts <= 0.0 || ts > 0.05)
+        if (Bad(ts) || ts <= 0.0 || ts > MaxSamplePeriodS)
         {
             errors.Add("Örnekleme süresi Ts 0 ile 50 ms arasında olmalıdır (şu an " + Fmt(ts * 1000.0) + " ms).");
             return;
@@ -44,10 +50,10 @@ public static class ClosedLoopValidator
         if (!SolverFactory.IsFixedStep(s.Solver) || !(s.StepSizeS > 0.0))
             return;
         double ratio = ts / s.StepSizeS;
-        if (ratio < 1.0 - 1e-9 || Math.Abs(ratio - Math.Round(ratio)) > 1e-6)
+        if (ratio < 1.0 - RatioTolerance || Math.Abs(ratio - Math.Round(ratio)) > RatioTolerance)
             errors.Add("Ts, çözücü adımı h'nin tam katı olmalıdır (Ts = " + Fmt(ts * 1000.0) + " ms, h = "
                 + Fmt(s.StepSizeS * 1000.0) + " ms).");
-        if (c.Actuator == ActuatorKind.Motor && s.StepSizeS > MaxMotorStepS + 1e-12)
+        if (c.Actuator == ActuatorKind.Motor && s.StepSizeS > MaxMotorStepS + StepTolerance)
             errors.Add("Motor eyleyicisinde h en çok 0,2 ms olabilir: zıt EMK hafif bileği çok sertleştirir, "
                 + "daha büyük adımda çözücü kararlılık sınırına takılır.");
     }
@@ -55,9 +61,9 @@ public static class ClosedLoopValidator
     // Tahmini yük, kodlayıcı ve gürültü.
     private static void CheckModelAndSensor(ClosedLoopSettings c, List<string> errors)
     {
-        if (Bad(c.EstimatedPayloadKg) || c.EstimatedPayloadKg < 0.0 || c.EstimatedPayloadKg > 0.5)
+        if (Bad(c.EstimatedPayloadKg) || c.EstimatedPayloadKg < 0.0 || c.EstimatedPayloadKg > Payload.MaxMassKg)
             errors.Add("Tahmini yük 0 ile 0,5 kg arasında olmalıdır.");
-        if (c.EncoderCounts < 16)
+        if (c.EncoderCounts < MinEncoderCounts)
             errors.Add("Kodlayıcı sayımı en az 16 olmalıdır (XM430-W350: 4096).");
         if (Bad(c.NoiseStdDevRad) || c.NoiseStdDevRad < 0.0)
             errors.Add("Gürültü standart sapması negatif olamaz.");

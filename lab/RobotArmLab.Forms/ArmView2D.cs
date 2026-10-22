@@ -16,6 +16,9 @@ public class ArmView2D : UserControl
     private const double ViewHalfWidthM = 0.45;   // çizilen bölge: r ∈ [−0,45; 0,45] m
     private const double ViewTopM = 0.50;         // z ∈ [−0,05; 0,50] m
     private const double ViewBottomM = -0.05;
+    private const double GridStepM = 0.1;            // ızgara çizgileri 10 cm aralıklı
+    private const double PedestalHalfWidthM = 0.04;  // taban bloğu 8 cm geniş
+    private const double PedestalHeightM = 0.03;     // ve 3 cm yüksek (yalnız görsel)
 
     private double[] r = new double[5];   // eklem noktalarının yatay konumu, m
     private double[] z = new double[5];   // eklem noktalarının yüksekliği, m
@@ -78,15 +81,16 @@ public class ArmView2D : UserControl
     {
         using (Pen gridPen = new Pen(Color.Gainsboro))
         {
+            // Düşey çizgiler r = −40 … +40 cm (k = −4 … 4), yatay çizgiler z = 0 … 50 cm (k = 0 … 5).
             for (int k = -4; k <= 4; k++)
-                g.DrawLine(gridPen, ToScreen(0.1 * k, ViewBottomM), ToScreen(0.1 * k, ViewTopM));
+                g.DrawLine(gridPen, ToScreen(k * GridStepM, ViewBottomM), ToScreen(k * GridStepM, ViewTopM));
             for (int k = 0; k <= 5; k++)
-                g.DrawLine(gridPen, ToScreen(-ViewHalfWidthM, 0.1 * k), ToScreen(ViewHalfWidthM, 0.1 * k));
+                g.DrawLine(gridPen, ToScreen(-ViewHalfWidthM, k * GridStepM), ToScreen(ViewHalfWidthM, k * GridStepM));
         }
         using (Pen groundPen = new Pen(Color.SaddleBrown, 3f))
             g.DrawLine(groundPen, ToScreen(-ViewHalfWidthM, 0.0), ToScreen(ViewHalfWidthM, 0.0));
-        PointF topLeft = ToScreen(-0.04, 0.03);
-        PointF bottomRight = ToScreen(0.04, 0.0);
+        PointF topLeft = ToScreen(-PedestalHalfWidthM, PedestalHeightM);
+        PointF bottomRight = ToScreen(PedestalHalfWidthM, 0.0);
         g.FillRectangle(Brushes.Black, topLeft.X, topLeft.Y, bottomRight.X - topLeft.X, bottomRight.Y - topLeft.Y);
     }
 

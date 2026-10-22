@@ -31,8 +31,15 @@ public class DormandPrinceSolver : IOdeSolver
     private static readonly double[] B5 = { 35.0 / 384, 0, 500.0 / 1113, 125.0 / 192, -2187.0 / 6784, 11.0 / 84, 0 };
     private static readonly double[] B4 = { 5179.0 / 57600, 0, 7571.0 / 16695, 393.0 / 640, -92097.0 / 339200, 187.0 / 2100, 1.0 / 40 };
 
-    /// <summary>Arayüzde gösterilen ad.</summary>
-    public string Name { get { return "Dormand–Prince RK45 (uyarlamalı, ode45)"; } }
+    // Adım boyu denetimi (ode45 ile aynı kurallar). Yerel hata h⁵ ile orantılıdır, bu yüzden hatayı 1'e indiren
+    // adım h·(1/hata)^(1/5)'tir. Güvenlik çarpanı 0,9 tahmini biraz küçük tutar, adım bir seferde en çok 5 kat
+    // büyür ve 5 kat (0,2) küçülür.
+    private const double ErrorExponent = 1.0 / 5.0;
+    private const double SafetyFactor = 0.9;
+    private const double MinStepScale = 0.2;
+    private const double MaxStepScale = 5.0;
+    private const double FirstStepGuessS = 0.01;   // ilk çağrıda kaba başlangıç tahmini, s
+    private const double MinStepS = 1e-12;          // bunun altına inen adım sistemin patladığı anlamına gelir, s
 
     /// <summary>Bağıl tolerans rtol (boyutsuz).</summary>
     public double RelativeTolerance { get; set; }
@@ -66,7 +73,7 @@ public class DormandPrinceSolver : IOdeSolver
     {
         double tEnd = t + h;
         if (nextStepS <= 0.0)
-            nextStepS = Math.Min(h, 0.01);   // ilk çağrıda kaba bir başlangıç tahmini
+            nextStepS = Math.Min(h, FirstStepGuessS);
         double[] current = x;
         double time = t;
 
@@ -76,8 +83,8 @@ public class DormandPrinceSolver : IOdeSolver
             double hStep = clipped ? tEnd - time : nextStepS;
             double error;
             double[] next = TryStep(f, time, current, hStep, out error);
-            double factor = error > 0.0 ? 0.9 * Math.Pow(1.0 / error, 0.2) : 5.0;
-            double hNew = hStep * Math.Max(0.2, Math.Min(5.0, factor));
+            double factor = error > 0.0 ? SafetyFactor * Math.Pow(1.0 / error, ErrorExponent) : MaxStepScale;
+            double hNew = hStep * Math.Max(MinStepScale, Math.Min(MaxStepScale, factor));
 
             if (error <= 1.0)
             {
@@ -92,7 +99,7 @@ public class DormandPrinceSolver : IOdeSolver
             {
                 RejectedStepCount++;
                 nextStepS = hNew;
-                if (nextStepS < 1e-12)
+                if (nextStepS < MinStepS)
                     throw new InvalidOperationException("Dormand–Prince: adım boyu 1e-12 s'nin altına düştü (sistem çok sert veya NaN).");
             }
         }

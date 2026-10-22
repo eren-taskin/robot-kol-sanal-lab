@@ -50,11 +50,9 @@ public static class ClosedLoopBuilder
         return new string[] { "Eklem basamağı", "Eklem uzayında beşinci derece", "Kartezyen hedef (ters kinematik)", "Çember izleme" };
     }
 
-    /// <summary>
-    /// Seçilen kontrolcüyü kurar. Model tabanlı kontrolcüler kendi ArmDynamics nesnelerini tahmini yükle kurar
-    /// (gerçek yük tesiste kalır).
-    /// </summary>
-    public static IController CreateController(ClosedLoopSettings settings, ArmParameters parameters, double gravityMps2)
+    // Seçilen kontrolcüyü kurar. Model tabanlı kontrolcüler kendi ArmDynamics nesnelerini tahmini yükle kurar
+    // (gerçek yük tesiste kalır).
+    private static IController CreateController(ClosedLoopSettings settings, ArmParameters parameters, double gravityMps2)
     {
         ArmDynamics model = new ArmDynamics(new Payload(settings.EstimatedPayloadKg).ApplyTo(parameters), gravityMps2);
         switch (settings.Controller)

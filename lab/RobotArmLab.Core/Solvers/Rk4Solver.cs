@@ -6,9 +6,6 @@ namespace RobotArmLab.Core.Solvers;
 /// </summary>
 public class Rk4Solver : IOdeSolver
 {
-    /// <summary>Arayüzde gösterilen ad.</summary>
-    public string Name { get { return "RK4 (4. mertebe)"; } }
-
     /// <summary>Bir RK4 adımı: x + h/6 · (k1 + 2k2 + 2k3 + k4).</summary>
     public double[] Step(OdeFunction f, double t, double[] x, double h)
     {

@@ -31,8 +31,8 @@ public static class CsvExporter
             writer.WriteLine(Line(samples[n]));
     }
 
-    /// <summary>Bir örneğin CSV satırı (başlıktaki sütun sırasıyla).</summary>
-    public static string Line(SimulationSample s)
+    // Bir örneğin CSV satırı (başlıktaki sütun sırasıyla).
+    private static string Line(SimulationSample s)
     {
         StringBuilder sb = new StringBuilder();
         sb.Append(Number(s.TimeS));

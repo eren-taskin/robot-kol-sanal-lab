@@ -23,12 +23,12 @@ Gereken: Windows 10 (sürüm 2004 veya sonrası) ya da Windows 11, internet bağ
 ## 3. Çözümü açma ve çalıştırma
 
 1. Visual Studio'yu açın → **Bir proje veya çözüm aç** → klonladığınız klasörde `lab\RobotArmLab.sln` dosyasını seçin.
-2. Çözüm Gezgini'nde (Solution Explorer) üç proje görünür: `RobotArmLab.Core`, `RobotArmLab.Forms`, `RobotArmLab.Tests`. (Testler eski çekirdeğe `src\RobotArm.Core` başvurduğu için o proje de otomatik derlenir.)
-3. `RobotArmLab.Forms` projesine sağ tıklayın → **Başlangıç Projesi Olarak Ayarla** (Set as Startup Project).
+2. Çözüm Gezgini'nde (Solution Explorer) üç proje görünür: `RobotArmLab.Forms`, `RobotArmLab.Core`, `RobotArmLab.Tests`. Başka proje yoktur; eski çekirdekle karşılaştırma testleri ayrı bir çözümdedir (`lab\verification\RobotArmLab.Verification.sln`).
+3. `RobotArmLab.Forms` çözümdeki ilk proje olduğu için başlangıç projesidir (kalın yazılır). Değilse sağ tıklayın → **Başlangıç Projesi Olarak Ayarla** (Set as Startup Project).
 4. **F5**'e basın. İlk derlemede NuGet paketleri (ScottPlot.WinForms 5.1.59, HelixToolkit.Wpf 3.1.2) iner; bu bir iki dakika sürebilir.
 5. "Robot Kol Sanal Laboratuvarı — açık çevrim" penceresi açılmalıdır.
 
-Testleri Visual Studio'da çalıştırmak için: **Test → Test Gezgini** → "Tümünü Çalıştır". 44 test geçmelidir.
+Testleri Visual Studio'da çalıştırmak için: **Test → Test Gezgini** → "Tümünü Çalıştır". 82 test geçmelidir.
 
 Formu tasarımcıda açmak için: Çözüm Gezgini'nde `MainForm.cs`'ye çift tıklayın (veya sağ tık → **Tasarımcıyı Görüntüle**). 3B görünüm ve grafikler tasarımcıda boş panel olarak görünür; çalışma anında eklenirler.
 

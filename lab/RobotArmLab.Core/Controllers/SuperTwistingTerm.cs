@@ -13,19 +13,13 @@ namespace RobotArmLab.Core.Controllers;
 /// </remarks>
 public class SuperTwistingTerm
 {
-    private readonly double[] candidate = new double[4];
+    private readonly double[] v = new double[4];           // her eklemin integral terimi v, rad/s²
+    private readonly double[] candidate = new double[4];   // bu örnekte hesaplanan, henüz kabul edilmemiş v
 
-    /// <summary>Her eklemin integral terimi v, rad/s².</summary>
-    public double[] V { get; } = new double[4];
-
-    /// <summary>Son örnekteki kayma değişkeni s = ė + Λe, rad/s.</summary>
-    public double[] S { get; } = new double[4];
-
-    /// <summary>v ve s'yi sıfırlar.</summary>
+    /// <summary>v'yi sıfırlar.</summary>
     public void Reset()
     {
-        Array.Clear(V);
-        Array.Clear(S);
+        Array.Clear(v);
         Array.Clear(candidate);
     }
 
@@ -35,15 +29,25 @@ public class SuperTwistingTerm
     /// </summary>
     public double Evaluate(int i, double s, double dt, double k1, double k2)
     {
-        double sign = s > 0.0 ? 1.0 : (s < 0.0 ? -1.0 : s);   // sign(0) = 0; NaN kalır (Math.Sign NaN'da istisna atar)
-        S[i] = s;
-        candidate[i] = V[i] + dt * k2 * sign;
+        double sign = Sign(s);
+        candidate[i] = v[i] + dt * k2 * sign;
         return k1 * Math.Sqrt(Math.Abs(s)) * sign + candidate[i];
     }
 
     /// <summary>Eklem i'nin aday v değerini kabul eder (çıkış kırpılmadıysa çağrılır).</summary>
     public void Commit(int i)
     {
-        V[i] = candidate[i];
+        v[i] = candidate[i];
+    }
+
+    // İşaret fonksiyonu: pozitifte +1, negatifte −1, sıfırda 0. Math.Sign kullanılmaz, çünkü s NaN olursa
+    // (sayısal patlama) istisna atar; burada NaN olduğu gibi geçer ve simülatör "sayısal hata" diye durur.
+    private static double Sign(double s)
+    {
+        if (s > 0.0)
+            return 1.0;
+        if (s < 0.0)
+            return -1.0;
+        return s;
     }
 }

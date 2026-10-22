@@ -5,6 +5,7 @@ on:
   pull_request:
 
 jobs:
+  # Old core and its tests. The old core stays in the repository as the oracle for lab/verification.
   build-and-test:
     runs-on: ubuntu-latest
     steps:
@@ -20,14 +21,9 @@ jobs:
       - name: Test
         run: dotnet test RobotArm.sln --configuration Release --no-build --filter "Category!=Report"
 
-      # D10: Release publish uses WebAssembly AOT; build and test above do not need it.
-      - name: Publish Web (AOT)
-        run: |
-          dotnet workload install wasm-tools
-          dotnet publish src/RobotArm.Web --configuration Release
-
-  # W1: lean Windows Forms laboratory core (lab/). The old core is referenced by the tests as an oracle only.
-  # Linux builds and tests only the core and its tests; the Forms project is built on Windows below.
+  # W4: both lab solutions on Linux. lab/RobotArmLab.sln is what the instructor opens (core, Forms, tests);
+  # the Forms project compiles here through EnableWindowsTargeting. lab/verification/RobotArmLab.Verification.sln
+  # compares the lab core with the old core (oracle tests).
   lab-build-and-test:
     runs-on: ubuntu-latest
     steps:
@@ -37,13 +33,19 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: Build lab core and tests
-        run: dotnet build lab/RobotArmLab.Tests/RobotArmLab.Tests.csproj --configuration Release
+      - name: Build lab solution
+        run: dotnet build lab/RobotArmLab.sln --configuration Release
 
-      - name: Test lab
-        run: dotnet test lab/RobotArmLab.Tests/RobotArmLab.Tests.csproj --configuration Release --no-build
+      - name: Test lab solution
+        run: dotnet test lab/RobotArmLab.sln --configuration Release --no-build
 
-  # W2: the whole lab solution, including the Windows Forms application, on Windows.
+      - name: Build verification solution
+        run: dotnet build lab/verification/RobotArmLab.Verification.sln --configuration Release
+
+      - name: Test verification solution (oracle)
+        run: dotnet test lab/verification/RobotArmLab.Verification.sln --configuration Release --no-build
+
+  # W2: the lab solution, including the Windows Forms application, on Windows.
   lab-windows:
     runs-on: windows-latest
     steps:

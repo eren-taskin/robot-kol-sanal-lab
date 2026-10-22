@@ -6,9 +6,6 @@ namespace RobotArmLab.Core.Solvers;
 /// </summary>
 public class HeunSolver : IOdeSolver
 {
-    /// <summary>Arayüzde gösterilen ad.</summary>
-    public string Name { get { return "Heun / RK2 (2. mertebe)"; } }
-
     /// <summary>Bir Heun adımı: x + h/2 · (k1 + k2), k2 Euler tahmini noktasındaki eğim.</summary>
     public double[] Step(OdeFunction f, double t, double[] x, double h)
     {

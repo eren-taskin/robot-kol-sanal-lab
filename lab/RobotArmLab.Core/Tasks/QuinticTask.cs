@@ -12,9 +12,6 @@ public class QuinticTask : IReferenceTask
     private readonly double startTimeS;
     private readonly double durationS;
 
-    /// <summary>Arayüzde gösterilen ad.</summary>
-    public string Name { get; set; }
-
     /// <summary>Başlangıç q0 (rad), hedef qf (rad), başlama anı t0 (s) ve süre T (s, &gt; 0) ile görevi kurar.</summary>
     public QuinticTask(double[] start, double[] goal, double startTimeS, double durationS)
     {
@@ -22,7 +19,6 @@ public class QuinticTask : IReferenceTask
         this.goal = (double[])goal.Clone();
         this.startTimeS = startTimeS;
         this.durationS = durationS;
-        Name = "Eklem uzayında beşinci derece yörünge";
     }
 
     /// <summary>Hedef açılar qf, rad (kopya).</summary>
@@ -35,9 +31,10 @@ public class QuinticTask : IReferenceTask
         double s = (t - startTimeS) / T;
         if (s < 0.0) s = 0.0;
         if (s > 1.0) s = 1.0;
-        double p = s * s * s * (10.0 + s * (-15.0 + 6.0 * s));
-        double pd = 30.0 * s * s * (1.0 - s) * (1.0 - s) / T;
-        double pdd = 60.0 * s * (1.0 - s) * (1.0 - 2.0 * s) / (T * T);
+        double s2 = s * s, s3 = s2 * s, s4 = s3 * s, s5 = s4 * s;
+        double p = 10.0 * s3 - 15.0 * s4 + 6.0 * s5;
+        double pd = (30.0 * s2 - 60.0 * s3 + 30.0 * s4) / T;           // dp/ds = 30s² − 60s³ + 30s⁴, ds/dt = 1/T
+        double pdd = (60.0 * s - 180.0 * s2 + 120.0 * s3) / (T * T);   // d²p/ds² = 60s − 180s² + 120s³
 
         JointReference r = new JointReference();
         for (int i = 0; i < 4; i++)

@@ -13,21 +13,16 @@ namespace RobotArmLab.Core.Controllers;
 /// </remarks>
 public class PidController : IController
 {
+    private readonly PidGains gains;
     private readonly double torqueLimitNm;
     private readonly double[] integral = new double[4];   // ∫e dt, rad·s
     private double lastTimeS;
     private bool started;
 
-    /// <summary>Kazançlar (kurucuda verilen nesne; koşu sırasında değiştirilmemelidir).</summary>
-    public PidGains Gains { get; }
-
-    /// <summary>Arayüzde gösterilen ad.</summary>
-    public string Name { get { return "PID (taban çizgisi)"; } }
-
     /// <summary>Kazançlar ve tork sınırı τmax (N·m) ile kontrolcüyü kurar.</summary>
     public PidController(PidGains gains, double torqueLimitNm)
     {
-        Gains = gains;
+        this.gains = gains;
         this.torqueLimitNm = torqueLimitNm;
     }
 
@@ -52,7 +47,7 @@ public class PidController : IController
             double e = qRef[i] - q[i];
             double eDot = qdRef[i] - qd[i];
             double candidate = integral[i] + e * dt;
-            double u = Gains.Kp[i] * e + Gains.Ki[i] * candidate + Gains.Kd[i] * eDot;
+            double u = gains.Kp[i] * e + gains.Ki[i] * candidate + gains.Kd[i] * eDot;
             if (Math.Abs(u) <= torqueLimitNm)
                 integral[i] = candidate;   // doyumda değilse integrali kabul et
             tau[i] = Math.Max(-torqueLimitNm, Math.Min(torqueLimitNm, u));

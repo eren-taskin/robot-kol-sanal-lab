@@ -38,6 +38,9 @@ public class IkResult
 /// </summary>
 public static class InverseKinematics
 {
+    // cos φ, yuvarlama hatası yüzünden erişim sınırındaki bir hedefte 1'i bu kadar aşabilir; bu pay erişilebilir sayılır.
+    private const double CosRoundingTolerance = 1e-14;
+
     /// <summary>
     /// Hedefe giden eklem açılarını hesaplar. elbowUp: dirsek yukarı (true) veya aşağı (false) dalı.
     /// checkLimits: true ise sınır dışı çözüm JointLimit hatasıdır. Hiçbir zaman NaN veya istisna döndürmez.
@@ -53,7 +56,7 @@ public static class InverseKinematics
 
         // Eş. (6): kosinüs teoremi ile dirsek açısı φ. |cos φ| > 1 ise üçgen kurulamaz: hedef erişilemez.
         double cosPhi = (u * u + v * v - L2 * L2 - L3 * L3) / (2.0 * L2 * L3);
-        if (double.IsNaN(cosPhi) || Math.Abs(cosPhi) > 1.0 + 1e-14)
+        if (double.IsNaN(cosPhi) || Math.Abs(cosPhi) > 1.0 + CosRoundingTolerance)
             return Fail(IkFailure.Unreachable, "Hedef erişim alanının dışında.", null);
         cosPhi = Math.Max(-1.0, Math.Min(1.0, cosPhi));   // yalnız yuvarlama hatasını kırpar
         double phi = elbowUp ? -Math.Acos(cosPhi) : Math.Acos(cosPhi);

@@ -23,8 +23,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RobotArmLab.Core\RobotArmLab.Core.csproj" />
-    <!-- Eski çekirdek yalnızca test kâhini (oracle) olarak kullanılır; yeni çekirdek ona bağlı değildir. -->
-    <ProjectReference Include="..\..\src\RobotArm.Core\RobotArm.Core.csproj" />
   </ItemGroup>
 
 </Project>

@@ -26,6 +26,13 @@ namespace RobotArmLab.Core.Simulation;
 /// </remarks>
 public class ClosedLoopSimulator
 {
+    // Zaman karşılaştırmalarında kayan nokta payı, s: t = k·Ts toplamı tam 1,000 yerine 0,99999999 çıkabilir.
+    private const double TimeToleranceS = 1e-9;
+
+    private readonly IController controller;   // kontrolcü (kendi tahmini modeliyle)
+    private readonly IReferenceTask task;       // izlenen görev
+    private readonly JointSensor sensor;
+    private readonly ActuatorKind actuator;     // ideal tork veya motor
     private readonly DcMotor motor;
     private readonly double[] qMeasured = new double[4];
     private readonly double[] qdMeasured = new double[4];
@@ -34,18 +41,6 @@ public class ClosedLoopSimulator
 
     /// <summary>Tesis: gerçek parametreler ve gerçek yükle kurulmuş açık çevrim simülatörü.</summary>
     public OpenLoopSimulator Plant { get; }
-
-    /// <summary>Kontrolcü (kendi tahmini modeliyle).</summary>
-    public IController Controller { get; }
-
-    /// <summary>İzlenen görev.</summary>
-    public IReferenceTask Task { get; }
-
-    /// <summary>Eklem algılayıcısı.</summary>
-    public JointSensor Sensor { get; }
-
-    /// <summary>Eyleyici türü (ideal tork veya motor).</summary>
-    public ActuatorKind Actuator { get; }
 
     /// <summary>Örnekleme süresi Ts, s.</summary>
     public double SamplePeriodS { get; }
@@ -67,10 +62,10 @@ public class ClosedLoopSimulator
         ActuatorKind actuator, double samplePeriodS)
     {
         Plant = plant;
-        Controller = controller;
-        Task = task;
-        Sensor = sensor;
-        Actuator = actuator;
+        this.controller = controller;
+        this.task = task;
+        this.sensor = sensor;
+        this.actuator = actuator;
         SamplePeriodS = samplePeriodS;
         motor = DcMotor.Xm430W350(plant.Parameters.GearRatio);
         initialPayloadKg = plant.Payload.MassKg;
@@ -79,14 +74,14 @@ public class ClosedLoopSimulator
     /// <summary>Tesisi verilen durumdan başlatır; kontrolcüyü, algılayıcıyı ve tutulan komutu sıfırlar.</summary>
     public void Reset(ArmState initial)
     {
-        Plant.Mode = Actuator == ActuatorKind.Motor ? InputMode.Voltage : InputMode.Torque;
+        Plant.Mode = actuator == ActuatorKind.Motor ? InputMode.Voltage : InputMode.Torque;
         for (int i = 0; i < 4; i++)
             Plant.Inputs[i] = new JointInput();   // sabit 0; Step her örnekte genliği yazar
         Plant.FrameTimeS = SamplePeriodS;
         Plant.Payload = new Payload(initialPayloadKg);
         Plant.Reset(initial);
-        Controller.Reset();
-        Sensor.Reset();
+        controller.Reset();
+        sensor.Reset();
         lastCommand = new double[4];
     }
 
@@ -94,14 +89,14 @@ public class ClosedLoopSimulator
     public List<SimulationSample> Step()
     {
         double t = Plant.TimeS;
-        if (t >= PayloadSwitchTimeS - 1e-9 && Plant.Payload.MassKg != SwitchedPayloadKg)
+        if (t >= PayloadSwitchTimeS - TimeToleranceS && Plant.Payload.MassKg != SwitchedPayloadKg)
             Plant.ChangePayload(SwitchedPayloadKg);   // yük kavrandı
-        Sensor.Measure(t, Plant.State.Q, Plant.State.Qd, qMeasured, qdMeasured);
-        JointReference r = Task.At(t);
-        double[] tau = Controller.Compute(t, qMeasured, qdMeasured, r.Q, r.Qd, r.Qdd);
+        sensor.Measure(t, Plant.State.Q, Plant.State.Qd, qMeasured, qdMeasured);
+        JointReference r = task.At(t);
+        double[] tau = controller.Compute(t, qMeasured, qdMeasured, r.Q, r.Qd, r.Qdd);
         for (int i = 0; i < 4; i++)
         {
-            double u = Actuator == ActuatorKind.Motor ? motor.VoltageFor(tau[i], qdMeasured[i]) : tau[i];
+            double u = actuator == ActuatorKind.Motor ? motor.VoltageFor(tau[i], qdMeasured[i]) : tau[i];
             Plant.Inputs[i].Amplitude = u;
         }
         lastCommand = (double[])tau.Clone();
@@ -122,7 +117,7 @@ public class ClosedLoopSimulator
 
     private void Annotate(SimulationSample s)
     {
-        JointReference r = Task.At(s.TimeS);
+        JointReference r = task.At(s.TimeS);
         s.QRef = r.Q;
         s.QdRef = r.Qd;
         s.TauCommand = (double[])lastCommand.Clone();

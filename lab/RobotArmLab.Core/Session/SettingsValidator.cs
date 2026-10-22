@@ -13,6 +13,14 @@ namespace RobotArmLab.Core.Session;
 /// </summary>
 public static class SettingsValidator
 {
+    /// <summary>Oynatma hızının üst sınırı (kat). Karşılaştırma koşuları bu en yüksek hızda yapılır.</summary>
+    public const double MaxSpeedFactor = 100.0;
+
+    // Ayar sınırları. Fiziksel bir zorunluluk değil; yazım hatasını (ör. 1000 yerine 10000) yakalamak içindir.
+    private const double MaxGravityMps2 = 100.0;   // Jüpiter (24,79) bile rahatça içinde kalır
+    private const double MaxStepS = 0.05;           // 50 ms; daha büyük adımda hiçbir çözücü kolu doğru izleyemez
+    private const double MaxDurationS = 600.0;      // 10 dakika
+
     private static readonly CultureInfo Turkish = CultureInfo.GetCultureInfo("tr-TR");
 
     /// <summary>Bütün denetimleri yapar; boş liste ayarların geçerli olduğu anlamına gelir.</summary>
@@ -84,12 +92,12 @@ public static class SettingsValidator
     private static void CheckEnvironmentAndPayload(LabSession s, List<string> errors)
     {
         double g = s.Environment.GravityMps2;
-        if (Bad(g) || g < 0.0 || g > 100.0)
+        if (Bad(g) || g < 0.0 || g > MaxGravityMps2)
             errors.Add("Yerçekimi ivmesi g 0 ile 100 m/s² arasında olmalıdır (şu an " + Fmt(g) + ").");
         double mp = s.Payload.MassKg;
         if (Bad(mp) || mp < 0.0)
             errors.Add("Yük kütlesi negatif olamaz.");
-        else if (mp > 0.5)
+        else if (mp > Payload.MaxMassKg)
             errors.Add("Yük kütlesi en çok 0,5 kg olabilir (üreticinin taşıma kapasitesi).");
     }
 
@@ -100,15 +108,15 @@ public static class SettingsValidator
         {
             if (!IsPositive(s.StepSizeS))
                 errors.Add("Adım boyu h sıfırdan büyük olmalıdır (şu an " + Fmt(s.StepSizeS * 1000.0) + " ms).");
-            else if (s.StepSizeS > 0.05)
+            else if (s.StepSizeS > MaxStepS)
                 errors.Add("Adım boyu h en çok 50 ms olabilir.");
         }
         else if (!IsPositive(s.RelativeTolerance) || !IsPositive(s.AbsoluteTolerance))
             errors.Add("Dormand–Prince toleransları rtol ve atol sıfırdan büyük olmalıdır.");
 
-        if (!IsPositive(s.DurationS) || s.DurationS > 600.0)
+        if (!IsPositive(s.DurationS) || s.DurationS > MaxDurationS)
             errors.Add("Simülasyon süresi 0 ile 600 s arasında olmalıdır.");
-        if (!IsPositive(s.SpeedFactor) || s.SpeedFactor > 100.0)
+        if (!IsPositive(s.SpeedFactor) || s.SpeedFactor > MaxSpeedFactor)
             errors.Add("Oynatma hızı 0 ile 100 kat arasında olmalıdır.");
     }
 

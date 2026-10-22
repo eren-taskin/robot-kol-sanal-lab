@@ -22,26 +22,16 @@ namespace RobotArmLab.Core.Controllers;
 public class FeedForwardStsmcController : IController
 {
     private readonly SuperTwistingTerm twisting = new SuperTwistingTerm();
+    private readonly ArmDynamics model;   // kontrolcünün kendi (tahmini) dinamik modeli
+    private readonly SuperTwistingGains gains;
     private double lastTimeS;
     private bool started;
-
-    /// <summary>Kontrolcünün kendi (tahmini) dinamik modeli.</summary>
-    public ArmDynamics Model { get; }
-
-    /// <summary>Kazançlar (STSMC ile aynı sınıf; yarım örnek öngörüsü kullanılmaz).</summary>
-    public SuperTwistingGains Gains { get; }
-
-    /// <summary>Süper-büküm terimi (v ve s grafikler için okunabilir).</summary>
-    public SuperTwistingTerm Twisting { get { return twisting; } }
-
-    /// <summary>Arayüzde gösterilen ad.</summary>
-    public string Name { get { return "İleri beslemeli süper-büküm (FF-STSMC)"; } }
 
     /// <summary>Tahmini model ve kazançlarla kontrolcüyü kurar.</summary>
     public FeedForwardStsmcController(ArmDynamics model, SuperTwistingGains gains)
     {
-        Model = model;
-        Gains = gains;
+        this.model = model;
+        this.gains = gains;
     }
 
     /// <summary>v, s ve örnek zamanını sıfırlar.</summary>
@@ -64,12 +54,12 @@ public class FeedForwardStsmcController : IController
         {
             double e = qRef[i] - q[i];
             double eDot = qdRef[i] - qd[i];
-            double s = eDot + Gains.Lambda[i] * e;
-            a[i] = qddRef[i] + Gains.Lambda[i] * eDot + twisting.Evaluate(i, s, dt, Gains.K1[i], Gains.K2[i]);
+            double s = eDot + gains.Lambda[i] * e;
+            a[i] = qddRef[i] + gains.Lambda[i] * eDot + twisting.Evaluate(i, s, dt, gains.K1[i], gains.K2[i]);
         }
 
-        double[] tau = Model.InverseDynamics(qRef, qdRef, a);   // M̂(q_ref) a + ĉ(q_ref, q̇_ref) + ĝ(q_ref) + f̂(q̇_ref)
-        SuperTwistingController.CommitUnclamped(twisting, tau, Model.Parameters.TorqueLimitNm);
-        return HalfSample.Clamp(tau, Model.Parameters.TorqueLimitNm);
+        double[] tau = model.InverseDynamics(qRef, qdRef, a);   // M̂(q_ref) a + ĉ(q_ref, q̇_ref) + ĝ(q_ref) + f̂(q̇_ref)
+        SuperTwistingController.CommitUnclamped(twisting, tau, model.Parameters.TorqueLimitNm);
+        return HalfSample.Clamp(tau, model.Parameters.TorqueLimitNm);
     }
 }

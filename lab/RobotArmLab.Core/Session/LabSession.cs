@@ -21,8 +21,8 @@ public class LabSession
     /// <summary>Bir Advance çağrısında atılacak en çok çözücü adımı. Arayüz donmasın diye iş burada kesilir.</summary>
     public const int MaxStepsPerCall = 20000;
 
-    /// <summary>Dormand–Prince'te örneklerin (çıktının) alındığı aralık, s. Alt adımları çözücü kendisi seçer.</summary>
-    public const double DormandPrinceOutputIntervalS = 0.005;
+    // Dormand–Prince'te örneklerin (çıktının) alındığı aralık, s. Alt adımları çözücü kendisi seçer.
+    private const double DormandPrinceOutputIntervalS = 0.005;
 
     private OpenLoopSimulator simulator;   // kol (tesis); kapalı çevrimde de bu nesne ilerler
     private ClosedLoopSimulator loop;       // kapalı çevrimde dolu, açık çevrimde null
@@ -84,6 +84,7 @@ public class LabSession
     public double TimeS { get { return simulator.TimeS; } }
 
     /// <summary>Simülasyon süre dolduğu için bitti mi.</summary>
+    // Yarım adım payı: zaman stepCount·h ile hesaplandığından son adım DurationS'a tam değil çok yakın düşer.
     public bool IsFinished { get { return TimeS >= DurationS - 0.5 * simulator.StepSizeS; } }
 
     /// <summary>Simülasyon bir hata yüzünden (sınır, zemin, NaN) durdu mu.</summary>
@@ -219,8 +220,8 @@ public class LabSession
     /// <summary>Kolun şu anki eklem açıları q, rad (kopya).</summary>
     public double[] CurrentQRad() { return (double[])simulator.State.Q.Clone(); }
 
-    /// <summary>Simülatörün kullandığı adım veya çıktı aralığı, s. Kapalı çevrimde Dormand–Prince'in çıktı aralığı Ts'dir.</summary>
-    public double EffectiveStepS()
+    // Simülatörün kullandığı adım veya çıktı aralığı, s. Kapalı çevrimde Dormand–Prince'in çıktı aralığı Ts'dir.
+    private double EffectiveStepS()
     {
         if (SolverFactory.IsFixedStep(Solver))
             return StepSizeS;

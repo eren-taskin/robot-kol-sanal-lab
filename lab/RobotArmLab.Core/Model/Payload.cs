@@ -8,6 +8,9 @@ namespace RobotArmLab.Core.Model;
 /// </summary>
 public class Payload
 {
+    /// <summary>İzin verilen en büyük yük, kg (üreticinin taşıma kapasitesi). Ayar denetimleri bunu kullanır.</summary>
+    public const double MaxMassKg = 0.5;
+
     /// <summary>Yükün kütlesi mp, kg. 0 ise yük yoktur.</summary>
     public double MassKg { get; set; }
 

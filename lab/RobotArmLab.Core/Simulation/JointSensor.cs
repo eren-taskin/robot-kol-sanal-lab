@@ -45,9 +45,6 @@ public class JointSensor
         Reset();
     }
 
-    /// <summary>Kodlayıcı çözünürlüğü r = 2π / sayım, rad.</summary>
-    public double ResolutionRad { get { return 2.0 * Math.PI / CountsPerRevolution; } }
-
     /// <summary>Gürültü üretecini tohumdan yeniden kurar ve önceki ölçümü unutur.</summary>
     public void Reset()
     {
@@ -67,7 +64,7 @@ public class JointSensor
             return;
         }
         double dt = t - lastTimeS;
-        double r = ResolutionRad;
+        double r = 2.0 * Math.PI / CountsPerRevolution;   // kodlayıcı çözünürlüğü, rad
         for (int i = 0; i < 4; i++)
         {
             double angle = q[i] + (NoiseStdDevRad > 0.0 ? NoiseStdDevRad * NextGaussian() : 0.0);

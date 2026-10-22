@@ -88,13 +88,4 @@ public class DcMotor
     {
         return voltageV / (GearRatio * BackEmfConstantVsPerRad);
     }
-
-    /// <summary>
-    /// Zıt EMK'nın eklemde yarattığı eşdeğer viskoz sönüm b = (N·Kt)(N·Ke)/R, N·m·s/rad (yaklaşık 0,85).
-    /// Gerilim modunda kolu güçlü biçimde frenler ve sistemi sertleştirir; adım boyu seçerken önemlidir.
-    /// </summary>
-    public double BackEmfDampingNmsPerRad()
-    {
-        return GearRatio * TorqueConstantNmPerA * GearRatio * BackEmfConstantVsPerRad / ResistanceOhm;
-    }
 }

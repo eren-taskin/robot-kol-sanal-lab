@@ -7,9 +7,6 @@ namespace RobotArmLab.Core.Controllers;
 /// </summary>
 public interface IController
 {
-    /// <summary>Arayüzde gösterilen ad.</summary>
-    string Name { get; }
-
     /// <summary>İç durumu (integral, süper-büküm terimi, son örnek zamanı) sıfırlar. Her koşunun başında çağrılır.</summary>
     void Reset();
 

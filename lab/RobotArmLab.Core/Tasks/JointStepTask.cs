@@ -10,9 +10,6 @@ public class JointStepTask : IReferenceTask
     private readonly double[] target;
     private readonly double stepTimeS;
 
-    /// <summary>Arayüzde gösterilen ad.</summary>
-    public string Name { get { return "Eklem basamağı"; } }
-
     /// <summary>Başlangıç q0 (rad), hedef (rad) ve basamak anı t0 (s) ile görevi kurar.</summary>
     public JointStepTask(double[] start, double[] target, double stepTimeS)
     {

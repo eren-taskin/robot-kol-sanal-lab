@@ -12,9 +12,6 @@ public delegate double[] OdeFunction(double t, double[] x);
 /// </summary>
 public interface IOdeSolver
 {
-    /// <summary>Arayüzde gösterilen ad.</summary>
-    string Name { get; }
-
     /// <summary>
     /// x(t)'den x(t + h)'yi hesaplar ve yeni durum vektörünü döndürür (x değiştirilmez). h, s.
     /// Uyarlamalı çözücü bu aralığı kendi içinde daha küçük adımlara bölebilir.

@@ -15,6 +15,12 @@ public class ControlMetrics
     /// <summary>Oturma bandının varsayılanı, rad (≈ 0,29°).</summary>
     public const double DefaultSettlingBandRad = 0.005;
 
+    // Aşma yalnız en az 1 mrad hareket eden eklemlerde hesaplanır; duran eklemde Δ ≈ 0'a bölmek anlamsız olurdu.
+    private const double MinMoveForOvershootRad = 1e-3;
+
+    // Komut τmax'ın bu oranına ulaştıysa doyumda sayılır (kırpılmış değer τmax'tan kayan nokta kadar küçük olabilir).
+    private const double SaturationFraction = 1.0 - 1e-9;
+
     /// <summary>Bütün eklemler ve örnekler üzerinden eklem hatasının karesel ortalamasının kökü (RMS), rad.</summary>
     public double RmsErrorRad;
 
@@ -111,7 +117,7 @@ public class ControlMetrics
             {
                 m.MaxTorqueNm = Math.Max(m.MaxTorqueNm, Math.Abs(s.Tau[i]));
                 m.TorqueSquaredIntegral += s.Tau[i] * s.Tau[i] * dt;
-                saturated = saturated || Math.Abs(s.TauCommand[i]) >= limit * (1.0 - 1e-9);
+                saturated = saturated || Math.Abs(s.TauCommand[i]) >= limit * SaturationFraction;
                 if (n > 0)
                     variation += Math.Abs(s.TauCommand[i] - samples[n - 1].TauCommand[i]);
             }
@@ -130,7 +136,7 @@ public class ControlMetrics
         for (int i = 0; i < 4; i++)
         {
             double delta = last.QRef[i] - first.Q[i];
-            if (Math.Abs(delta) <= 1e-3)
+            if (Math.Abs(delta) <= MinMoveForOvershootRad)
                 continue;
             for (int n = 0; n < samples.Count; n++)
             {

@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Doğrulama projesi: lab çekirdeğini eski çekirdekle (RobotArm.Core, genel Newton–Euler) karşılaştırır.
+    Eski çekirdek yalnız burada, test kâhini (oracle) olarak kullanılır. Hocanın açtığı lab/RobotArmLab.sln
+    bu projeyi içermez; bu proje lab/verification/RobotArmLab.Verification.sln içindedir.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Karşılaştırma yardımcıları lab testleriyle aynıdır; kopyalanmaz, bağlantıyla derlenir. -->
+    <Compile Include="..\..\RobotArmLab.Tests\Assertions.cs" Link="Assertions.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\RobotArmLab.Core\RobotArmLab.Core.csproj" />
+    <ProjectReference Include="..\..\..\src\RobotArm.Core\RobotArm.Core.csproj" />
+  </ItemGroup>
+
+</Project>

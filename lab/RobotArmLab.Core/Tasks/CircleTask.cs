@@ -27,37 +27,19 @@ public enum CirclePlane
 public class CircleTask : IReferenceTask
 {
     private const double DerivativeStepS = 1e-4;
+    private const int ValidationPointCount = 360;   // Validate'in denediği nokta sayısı: her derecede bir
 
     private readonly ArmParameters parameters;
+    private readonly Point3 center;        // çemberin merkezi, m
+    private readonly double radiusM;       // yarıçap r, m
+    private readonly CirclePlane plane;
+    private readonly double periodS;       // bir turun süresi P, s
+    private readonly double pitchRad;      // takım eğimi ψ, rad (sabit)
+    private readonly bool elbowUp;         // dirsek dalı (true: yukarı)
+    private readonly double approachS;     // yaklaşma süresi Ta, s
+    private readonly double rampS;         // açısal hızın yumuşak başlama süresi Tr, s
     private readonly QuinticTask approach;
     private double[] lastQ;   // ters kinematik bir an başarısız olursa son iyi çözüm tutulur
-
-    /// <summary>Çemberin merkezi, m.</summary>
-    public Point3 Center { get; }
-
-    /// <summary>Yarıçap r, m.</summary>
-    public double RadiusM { get; }
-
-    /// <summary>Çemberin düzlemi.</summary>
-    public CirclePlane Plane { get; }
-
-    /// <summary>Bir turun süresi P, s.</summary>
-    public double PeriodS { get; }
-
-    /// <summary>Takım eğimi ψ, rad (sabit).</summary>
-    public double PitchRad { get; }
-
-    /// <summary>Dirsek dalı (true: yukarı).</summary>
-    public bool ElbowUp { get; }
-
-    /// <summary>Yaklaşma süresi Ta, s.</summary>
-    public double ApproachS { get; }
-
-    /// <summary>Açısal hızın yumuşak başlama süresi Tr, s.</summary>
-    public double RampS { get; }
-
-    /// <summary>Arayüzde gösterilen ad.</summary>
-    public string Name { get { return Plane == CirclePlane.Horizontal ? "Yatay çember izleme" : "Düşey çember izleme"; } }
 
     /// <summary>
     /// Görevi kurar. Çemberin ilk noktası erişilemezse yaklaşma kurulamaz; bunu <see cref="Validate"/> bildirir.
@@ -66,27 +48,27 @@ public class CircleTask : IReferenceTask
         double periodS, double pitchRad, bool elbowUp, double approachS, double rampS)
     {
         this.parameters = parameters;
-        Center = center;
-        RadiusM = radiusM;
-        Plane = plane;
-        PeriodS = periodS;
-        PitchRad = pitchRad;
-        ElbowUp = elbowUp;
-        ApproachS = approachS;
-        RampS = rampS;
+        this.center = center;
+        this.radiusM = radiusM;
+        this.plane = plane;
+        this.periodS = periodS;
+        this.pitchRad = pitchRad;
+        this.elbowUp = elbowUp;
+        this.approachS = approachS;
+        this.rampS = rampS;
         lastQ = (double[])start.Clone();
         double[] first = Solve(0.0);
         approach = new QuinticTask(start, first ?? start, 0.0, approachS);
     }
 
     /// <summary>
-    /// Çemberin 360 noktasını ters kinematikle (eklem sınırlarıyla) dener; sorun yoksa boş metin, varsa Türkçe neden döndürür.
+    /// Çemberin her derecesindeki noktayı (360 nokta) ters kinematikle (eklem sınırlarıyla) dener; sorun yoksa boş metin, varsa Türkçe neden döndürür.
     /// </summary>
     public string Validate()
     {
-        for (int k = 0; k < 360; k++)
+        for (int k = 0; k < ValidationPointCount; k++)
         {
-            double phi = 2.0 * Math.PI * k / 360.0;
+            double phi = 2.0 * Math.PI * k / ValidationPointCount;
             if (Solve(phi) == null)
                 return "Çember φ = " + k + "° noktasında erişim alanının veya eklem sınırlarının dışına çıkıyor.";
         }
@@ -96,16 +78,16 @@ public class CircleTask : IReferenceTask
     /// <summary>Çember üzerindeki φ açısına (rad) karşılık gelen takım noktası, m.</summary>
     public Point3 PointAt(double phi)
     {
-        double a = RadiusM * Math.Cos(phi), b = RadiusM * Math.Sin(phi);
-        if (Plane == CirclePlane.Horizontal)
-            return new Point3(Center.X + a, Center.Y + b, Center.Z);
-        return new Point3(Center.X + a, Center.Y, Center.Z + b);
+        double a = radiusM * Math.Cos(phi), b = radiusM * Math.Sin(phi);
+        if (plane == CirclePlane.Horizontal)
+            return new Point3(center.X + a, center.Y + b, center.Z);
+        return new Point3(center.X + a, center.Y, center.Z + b);
     }
 
     /// <summary>t anındaki referans: t &lt; Ta ise yaklaşma, sonra çember (hız ve ivme merkezî farkla).</summary>
     public JointReference At(double t)
     {
-        if (t < ApproachS)
+        if (t < approachS)
             return approach.At(t);
 
         double d = DerivativeStepS;
@@ -120,23 +102,26 @@ public class CircleTask : IReferenceTask
         return r;
     }
 
-    /// <summary>Çember hareketinin başlamasından τ saniye sonraki açı φ(τ), rad (τ ≤ 0 için 0).</summary>
-    public double PhaseAt(double tau)
+    // Çember hareketinin başlamasından τ saniye sonraki açı φ(τ), rad (τ ≤ 0 için 0).
+    private double PhaseAt(double tau)
     {
-        double omega = 2.0 * Math.PI / PeriodS;
+        double omega = 2.0 * Math.PI / periodS;
         if (tau <= 0.0)
             return 0.0;
-        if (RampS > 0.0 && tau < RampS)
+        if (rampS > 0.0 && tau < rampS)
         {
-            double x = tau / RampS;
-            return omega * RampS * (x * x * x - 0.5 * x * x * x * x);
+            // φ̇ = ω(3x² − 2x³) ifadesinin integrali: φ = ω·Tr·(x³ − x⁴/2), x = τ/Tr.
+            double x = tau / rampS;
+            return omega * rampS * (x * x * x - 0.5 * x * x * x * x);
         }
-        return omega * (tau - 0.5 * RampS);
+        // Yumuşak başlama bitince (x = 1) biriken açı ω·Tr/2'dir; sonra φ̇ = ω sabit:
+        // φ = ω·Tr/2 + ω·(τ − Tr) = ω·(τ − Tr/2).
+        return omega * (tau - 0.5 * rampS);
     }
 
     private double[] JointsAt(double t)
     {
-        double[] q = Solve(PhaseAt(t - ApproachS));
+        double[] q = Solve(PhaseAt(t - approachS));
         if (q != null)
             lastQ = q;
         return lastQ;
@@ -145,7 +130,7 @@ public class CircleTask : IReferenceTask
     private double[] Solve(double phi)
     {
         Point3 p = PointAt(phi);
-        IkResult ik = InverseKinematics.Solve(parameters, p.X, p.Y, p.Z, PitchRad, ElbowUp, true);
+        IkResult ik = InverseKinematics.Solve(parameters, p.X, p.Y, p.Z, pitchRad, elbowUp, true);
         return ik.Success ? ik.Q : null;
     }
 }

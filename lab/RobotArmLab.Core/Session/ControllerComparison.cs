@@ -36,7 +36,8 @@ public class ComparisonResult
 /// </summary>
 public static class ControllerComparison
 {
-    private const double CurveIntervalS = 0.005;
+    private const double CurveIntervalS = 0.005;   // takım hatası eğrisine 5 ms'de bir nokta
+    private const double TimeToleranceS = 1e-9;    // örnek zamanlarındaki kayan nokta payı, s
 
     /// <summary>Her kontrolcüyü sırayla koşturur.</summary>
     public static List<ComparisonResult> Run(LabSession template, List<ControllerKind> kinds)
@@ -67,7 +68,7 @@ public static class ControllerComparison
         double next = 0.0;
         for (int n = 0; n < s.History.Count; n++)
         {
-            if (s.History[n].TimeS < next - 1e-9)
+            if (s.History[n].TimeS < next - TimeToleranceS)
                 continue;
             next = s.History[n].TimeS + CurveIntervalS;
             r.TimeS.Add(s.History[n].TimeS);
@@ -90,7 +91,7 @@ public static class ControllerComparison
         s.InitialQRad = (double[])t.InitialQRad.Clone();
         s.InitialQdRadPerS = (double[])t.InitialQdRadPerS.Clone();
         s.DurationS = t.DurationS;
-        s.SpeedFactor = 100.0;
+        s.SpeedFactor = SettingsValidator.MaxSpeedFactor;
         s.ClosedLoop = true;
         s.Closed = t.Closed.Clone();
         s.Closed.Controller = kind;

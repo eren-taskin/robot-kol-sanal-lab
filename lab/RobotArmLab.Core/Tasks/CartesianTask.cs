@@ -24,8 +24,6 @@ public static class CartesianTask
             return null;
         }
         error = "";
-        QuinticTask task = new QuinticTask(start, ik.Q, startTimeS, durationS);
-        task.Name = "Kartezyen hedef (ters kinematik + beşinci derece)";
-        return task;
+        return new QuinticTask(start, ik.Q, startTimeS, durationS);
     }
 }

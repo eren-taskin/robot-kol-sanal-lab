@@ -15,6 +15,9 @@ namespace RobotArmLab.Core.Simulation;
 /// </summary>
 public class OpenLoopSimulator
 {
+    private const double DefaultStepS = 0.0005;   // 0,5 ms: RK4 ile kolun en hızlı (bilek) hareketini rahatça çözer
+    private const double DefaultFrameS = 0.02;    // 20 ms = saniyede 50 ekran karesi
+
     private ArmDynamics dynamics;   // yük katılmış parametrelerle kurulan model
     private DcMotor motor;
     private long stepCount;         // atılan çözücü adımı sayısı; zaman = stepCount · h
@@ -72,8 +75,8 @@ public class OpenLoopSimulator
         Inputs = new JointInput[4];
         for (int i = 0; i < 4; i++)
             Inputs[i] = new JointInput();
-        StepSizeS = 0.0005;
-        FrameTimeS = 0.02;
+        StepSizeS = DefaultStepS;
+        FrameTimeS = DefaultFrameS;
         Reset(ArmState.AtRest(0.0, 0.0, 0.0, 0.0));
     }
 

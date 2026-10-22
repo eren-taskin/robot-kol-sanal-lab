@@ -17,7 +17,19 @@ namespace RobotArmLab.Forms;
 public class PlotPanel : UserControl
 {
     private const double PlotIntervalS = 0.005;   // grafiğe 5 ms'de bir nokta eklenir (çizim hızlı kalsın diye)
-    private const int SeriesCount = 31;          // q, q_ref, q̇, τ, τ_cmd (4'er), konum 3, enerji 3, e 4, takım hatası 1
+    private const double TimeToleranceS = 1e-9;   // örnek zamanları k·h toplamıdır; tam 5 ms yerine 4,999999 ms çıkabilir
+
+    // Bütün çizgilerin değerleri tek bir "series" dizisinde tutulur. Her grup, dizide şu numaradan başlar:
+    private const int AngleSeries = 0;        // q1..q4 (4 seri)
+    private const int AngleRefSeries = 4;     // q_ref1..4 (4)
+    private const int SpeedSeries = 8;        // q̇1..4 (4)
+    private const int TorqueSeries = 12;      // τ1..4 (4)
+    private const int TorqueCmdSeries = 16;   // τ_cmd1..4 (4)
+    private const int ToolSeries = 20;        // x, y, z (3)
+    private const int EnergySeries = 23;      // T, V, T + V (3)
+    private const int ErrorSeries = 26;       // e1..4 (4)
+    private const int ToolErrorSeries = 30;   // takım hatası (1)
+    private const int SeriesCount = 31;       // toplam
 
     private readonly TabControl tabs = new TabControl();
     private readonly List<FormsPlot> plots = new List<FormsPlot>();
@@ -34,14 +46,15 @@ public class PlotPanel : UserControl
     public PlotPanel()
     {
         tabs.Dock = DockStyle.Fill;
-        FormsPlot angles = AddPlot("Açılar q", "q (°)", new[] { "q1", "q2", "q3", "q4" }, 0);
-        AddDashed(angles, new[] { "q1 ref", "q2 ref", "q3 ref", "q4 ref" }, 4);
-        AddPlot("Hızlar q̇", "q̇ (°/s)", new[] { "q̇1", "q̇2", "q̇3", "q̇4" }, 8);
-        FormsPlot torques = AddPlot("Torklar τ", "τ (N·m)", new[] { "τ1", "τ2", "τ3", "τ4" }, 12);
-        AddDashed(torques, new[] { "τ1 komut", "τ2 komut", "τ3 komut", "τ4 komut" }, 16);
-        AddPlot("Takım konumu", "konum (m)", new[] { "x", "y", "z" }, 20);
-        AddPlot("Enerji", "enerji (J)", new[] { "T (kinetik)", "V (potansiyel)", "T + V" }, 23);
-        AddPlot("Hata", "e (°), takım hatası (mm)", new[] { "e1", "e2", "e3", "e4", "takım (mm)" }, 26);
+        FormsPlot angles = AddPlot("Açılar q", "q (°)", new[] { "q1", "q2", "q3", "q4" }, AngleSeries);
+        AddDashed(angles, new[] { "q1 ref", "q2 ref", "q3 ref", "q4 ref" }, AngleRefSeries);
+        AddPlot("Hızlar q̇", "q̇ (°/s)", new[] { "q̇1", "q̇2", "q̇3", "q̇4" }, SpeedSeries);
+        FormsPlot torques = AddPlot("Torklar τ", "τ (N·m)", new[] { "τ1", "τ2", "τ3", "τ4" }, TorqueSeries);
+        AddDashed(torques, new[] { "τ1 komut", "τ2 komut", "τ3 komut", "τ4 komut" }, TorqueCmdSeries);
+        AddPlot("Takım konumu", "konum (m)", new[] { "x", "y", "z" }, ToolSeries);
+        AddPlot("Enerji", "enerji (J)", new[] { "T (kinetik)", "V (potansiyel)", "T + V" }, EnergySeries);
+        // Hata grafiği e1..e4 ve takım hatasını birlikte çizer (ErrorSeries'ten başlayan 5 seri: 26..30).
+        AddPlot("Hata", "e (°), takım hatası (mm)", new[] { "e1", "e2", "e3", "e4", "takım (mm)" }, ErrorSeries);
         tabs.SelectedIndexChanged += delegate (object sender, EventArgs e) { RefreshVisible(); };
         Controls.Add(tabs);
         SetClosedLoop(false);
@@ -79,7 +92,7 @@ public class PlotPanel : UserControl
         for (int n = 0; n < samples.Count; n++)
         {
             SimulationSample s = samples[n];
-            if (s.TimeS < lastPlottedTimeS + PlotIntervalS - 1e-9)
+            if (s.TimeS < lastPlottedTimeS + PlotIntervalS - TimeToleranceS)
                 continue;
             lastPlottedTimeS = s.TimeS;
             time.Add(s.TimeS);
@@ -99,7 +112,7 @@ public class PlotPanel : UserControl
         plot.Refresh();
     }
 
-    // Bir örneğin 31 grafik değeri, SeriesCount sırasıyla. Açılar dereceye çevrilir. Açık çevrimde referans yoktur:
+    // Bir örneğin 31 grafik değeri, yukarıdaki seri numaralarına yerleştirilir. Açılar dereceye çevrilir. Açık çevrimde referans yoktur:
     // referans olarak q, komut olarak τ yazılır (çizgiler gizlidir), hata 0 olur.
     private double[] Values(SimulationSample s)
     {
@@ -109,20 +122,20 @@ public class PlotPanel : UserControl
         for (int i = 0; i < 4; i++)
         {
             double qRef = closed ? s.QRef[i] : s.Q[i];
-            v[i] = s.Q[i] * toDeg;
-            v[4 + i] = qRef * toDeg;
-            v[8 + i] = s.Qd[i] * toDeg;
-            v[12 + i] = s.Tau[i];
-            v[16 + i] = closed ? s.TauCommand[i] : s.Tau[i];
-            v[26 + i] = (qRef - s.Q[i]) * toDeg;
+            v[AngleSeries + i] = s.Q[i] * toDeg;
+            v[AngleRefSeries + i] = qRef * toDeg;
+            v[SpeedSeries + i] = s.Qd[i] * toDeg;
+            v[TorqueSeries + i] = s.Tau[i];
+            v[TorqueCmdSeries + i] = closed ? s.TauCommand[i] : s.Tau[i];
+            v[ErrorSeries + i] = (qRef - s.Q[i]) * toDeg;
         }
-        v[20] = s.ToolX;
-        v[21] = s.ToolY;
-        v[22] = s.ToolZ;
-        v[23] = s.KineticEnergyJ;
-        v[24] = s.PotentialEnergyJ;
-        v[25] = s.TotalEnergyJ;
-        v[30] = closed ? ControlMetrics.ToolErrorMm(Parameters, s) : 0.0;
+        v[ToolSeries] = s.ToolX;
+        v[ToolSeries + 1] = s.ToolY;
+        v[ToolSeries + 2] = s.ToolZ;
+        v[EnergySeries] = s.KineticEnergyJ;
+        v[EnergySeries + 1] = s.PotentialEnergyJ;
+        v[EnergySeries + 2] = s.TotalEnergyJ;
+        v[ToolErrorSeries] = closed ? ControlMetrics.ToolErrorMm(Parameters, s) : 0.0;
         return v;
     }
 

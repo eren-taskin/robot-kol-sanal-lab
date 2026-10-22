@@ -8,6 +8,8 @@ namespace RobotArmLab.Core.Session;
 /// <summary>Karşılaştırma tablosunu CSV olarak yazar (InvariantCulture: nokta ondalık, virgül ayırıcı).</summary>
 public static class ComparisonCsv
 {
+    private const int MetricCount = 11;   // Header'daki sayı sütunları (controller ve message dışındakiler)
+
     /// <summary>Başlık satırı: sütun adları ve birimleri, tablodaki sırayla.</summary>
     public const string Header =
         "controller,rms_rad,max_rad,final_rad,max_tool_mm,final_tool_mm,settling_s,overshoot_pct," +
@@ -21,13 +23,13 @@ public static class ComparisonCsv
             writer.WriteLine(Line(results[k]));
     }
 
-    /// <summary>Bir sonucun CSV satırı.</summary>
-    public static string Line(ComparisonResult r)
+    // Bir sonucun CSV satırı.
+    private static string Line(ComparisonResult r)
     {
         StringBuilder sb = new StringBuilder();
         sb.Append(Quote(r.Name));
         double[] v = Values(r.Metrics);
-        for (int i = 0; i < 11; i++)
+        for (int i = 0; i < MetricCount; i++)
             sb.Append(',').Append(v == null ? "" : v[i].ToString("G6", CultureInfo.InvariantCulture));
         sb.Append(',').Append(Quote(r.Message));
         return sb.ToString();

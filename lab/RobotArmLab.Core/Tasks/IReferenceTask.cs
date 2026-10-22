@@ -19,9 +19,6 @@ public class JointReference
 /// </summary>
 public interface IReferenceTask
 {
-    /// <summary>Arayüzde gösterilen ad.</summary>
-    string Name { get; }
-
     /// <summary>t (s) anındaki eklem referansı.</summary>
     JointReference At(double t);
 }

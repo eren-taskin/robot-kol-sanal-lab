@@ -6,9 +6,6 @@ namespace RobotArmLab.Core.Solvers;
 /// </summary>
 public class EulerSolver : IOdeSolver
 {
-    /// <summary>Arayüzde gösterilen ad.</summary>
-    public string Name { get { return "Euler (1. mertebe)"; } }
-
     /// <summary>Bir Euler adımı: eğimi adımın başında ölçer ve h boyunca sabit kabul eder.</summary>
     public double[] Step(OdeFunction f, double t, double[] x, double h)
     {

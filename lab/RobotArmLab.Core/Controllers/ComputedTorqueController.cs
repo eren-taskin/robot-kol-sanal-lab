@@ -8,7 +8,7 @@ namespace RobotArmLab.Core.Controllers;
 /// e = q_ref − q, ė = q̇_ref − q̇. Çıkış ±τmax'a kırpılır.
 /// </summary>
 /// <remarks>
-/// Şapkalı terimler kontrolcünün KENDİ modelinden (<see cref="Model"/>) gelir; bu model tahmini yükle
+/// Şapkalı terimler kontrolcünün KENDİ modelinden (model alanı) gelir; bu model tahmini yükle
 /// kurulur. Model doğruysa doğrusal olmayan terimler tam sökülür ve her eklem ë + Kd ė + Kp e = 0 gibi davranır.
 /// Model yanlışsa (gerçek yük ≠ tahmini yük) kalan fark bozucu olarak döngüde kalır.
 ///
@@ -21,23 +21,16 @@ namespace RobotArmLab.Core.Controllers;
 /// </remarks>
 public class ComputedTorqueController : IController
 {
+    private readonly ArmDynamics model;   // kontrolcünün kendi (tahmini) dinamik modeli
+    private readonly ComputedTorqueGains gains;
     private double lastTimeS;
     private bool started;
-
-    /// <summary>Kontrolcünün kendi (tahmini) dinamik modeli.</summary>
-    public ArmDynamics Model { get; }
-
-    /// <summary>Kazançlar.</summary>
-    public ComputedTorqueGains Gains { get; }
-
-    /// <summary>Arayüzde gösterilen ad.</summary>
-    public string Name { get { return "Hesaplanmış tork (CT)"; } }
 
     /// <summary>Tahmini model ve kazançlarla kontrolcüyü kurar. τmax modelin parametrelerinden alınır.</summary>
     public ComputedTorqueController(ArmDynamics model, ComputedTorqueGains gains)
     {
-        Model = model;
-        Gains = gains;
+        this.model = model;
+        this.gains = gains;
     }
 
     /// <summary>Örnek zamanını sıfırlar (bu kontrolcünün başka iç durumu yoktur).</summary>
@@ -50,18 +43,18 @@ public class ComputedTorqueController : IController
     /// <summary>Hesaplanmış tork, N·m (±τmax'a kırpılmış).</summary>
     public double[] Compute(double t, double[] q, double[] qd, double[] qRef, double[] qdRef, double[] qddRef)
     {
-        double dt = started && Gains.PredictHalfSample ? t - lastTimeS : 0.0;
+        double dt = started && gains.PredictHalfSample ? t - lastTimeS : 0.0;
         started = true;
         lastTimeS = t;
 
         double[] a = new double[4];   // istenen ivme, rad/s²
         for (int i = 0; i < 4; i++)
-            a[i] = qddRef[i] + Gains.Kd[i] * (qdRef[i] - qd[i]) + Gains.Kp[i] * (qRef[i] - q[i]);
+            a[i] = qddRef[i] + gains.Kd[i] * (qdRef[i] - qd[i]) + gains.Kp[i] * (qRef[i] - q[i]);
 
         double[] qBar = new double[4], qdBar = new double[4];
         HalfSample.Predict(q, qd, a, dt, qBar, qdBar);
-        double[] tau = Model.InverseDynamics(qBar, qdBar, a);   // M̂(q̄) a + ĉ + ĝ + f̂
-        return HalfSample.Clamp(tau, Model.Parameters.TorqueLimitNm);
+        double[] tau = model.InverseDynamics(qBar, qdBar, a);   // M̂(q̄) a + ĉ + ĝ + f̂
+        return HalfSample.Clamp(tau, model.Parameters.TorqueLimitNm);
     }
 }
 
@@ -73,8 +66,8 @@ internal static class HalfSample
     {
         for (int i = 0; i < 4; i++)
         {
-            qBar[i] = q[i] + 0.5 * dt * qd[i] + 0.125 * dt * dt * a[i];
-            qdBar[i] = qd[i] + 0.5 * dt * a[i];
+            qBar[i] = q[i] + qd[i] * dt / 2.0 + a[i] * dt * dt / 8.0;   // q + q̇·(Δt/2) + ½·a·(Δt/2)²
+            qdBar[i] = qd[i] + a[i] * dt / 2.0;
         }
     }
 

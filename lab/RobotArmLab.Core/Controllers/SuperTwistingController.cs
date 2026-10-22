@@ -18,26 +18,16 @@ namespace RobotArmLab.Core.Controllers;
 public class SuperTwistingController : IController
 {
     private readonly SuperTwistingTerm twisting = new SuperTwistingTerm();
+    private readonly ArmDynamics model;   // kontrolcünün kendi (tahmini) dinamik modeli
+    private readonly SuperTwistingGains gains;
     private double lastTimeS;
     private bool started;
-
-    /// <summary>Kontrolcünün kendi (tahmini) dinamik modeli.</summary>
-    public ArmDynamics Model { get; }
-
-    /// <summary>Kazançlar.</summary>
-    public SuperTwistingGains Gains { get; }
-
-    /// <summary>Süper-büküm terimi (v ve s grafikler için okunabilir).</summary>
-    public SuperTwistingTerm Twisting { get { return twisting; } }
-
-    /// <summary>Arayüzde gösterilen ad.</summary>
-    public string Name { get { return "Süper-büküm kayan kip (STSMC)"; } }
 
     /// <summary>Tahmini model ve kazançlarla kontrolcüyü kurar.</summary>
     public SuperTwistingController(ArmDynamics model, SuperTwistingGains gains)
     {
-        Model = model;
-        Gains = gains;
+        this.model = model;
+        this.gains = gains;
     }
 
     /// <summary>v, s ve örnek zamanını sıfırlar.</summary>
@@ -52,7 +42,7 @@ public class SuperTwistingController : IController
     public double[] Compute(double t, double[] q, double[] qd, double[] qRef, double[] qdRef, double[] qddRef)
     {
         double elapsed = started ? t - lastTimeS : 0.0;
-        double dt = Gains.PredictHalfSample ? elapsed : 0.0;
+        double dt = gains.PredictHalfSample ? elapsed : 0.0;
         started = true;
         lastTimeS = t;
 
@@ -61,15 +51,15 @@ public class SuperTwistingController : IController
         {
             double e = qRef[i] - q[i];
             double eDot = qdRef[i] - qd[i];
-            double s = eDot + Gains.Lambda[i] * e;
-            a[i] = qddRef[i] + Gains.Lambda[i] * eDot + twisting.Evaluate(i, s, elapsed, Gains.K1[i], Gains.K2[i]);
+            double s = eDot + gains.Lambda[i] * e;
+            a[i] = qddRef[i] + gains.Lambda[i] * eDot + twisting.Evaluate(i, s, elapsed, gains.K1[i], gains.K2[i]);
         }
 
         double[] qBar = new double[4], qdBar = new double[4];
         HalfSample.Predict(q, qd, a, dt, qBar, qdBar);
-        double[] tau = Model.InverseDynamics(qBar, qdBar, a);   // M̂(q̄) a + ĉ + ĝ + f̂
-        CommitUnclamped(twisting, tau, Model.Parameters.TorqueLimitNm);
-        return HalfSample.Clamp(tau, Model.Parameters.TorqueLimitNm);
+        double[] tau = model.InverseDynamics(qBar, qdBar, a);   // M̂(q̄) a + ĉ + ĝ + f̂
+        CommitUnclamped(twisting, tau, model.Parameters.TorqueLimitNm);
+        return HalfSample.Clamp(tau, model.Parameters.TorqueLimitNm);
     }
 
     /// <summary>Kırpılmayacak eklemlerin v adayını kabul eder (sargı önleme). Kırpmadan önce çağrılır.</summary>

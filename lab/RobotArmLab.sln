@@ -3,11 +3,11 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RobotArmLab.Forms", "RobotArmLab.Forms\RobotArmLab.Forms.csproj", "{3BA8D354-86C1-4042-9710-8D853C606D4F}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RobotArmLab.Core", "RobotArmLab.Core\RobotArmLab.Core.csproj", "{8F074AB1-2E42-4531-87C6-AD39304033E8}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RobotArmLab.Tests", "RobotArmLab.Tests\RobotArmLab.Tests.csproj", "{E1EC0AE8-A37C-48C8-9859-EE8F52E08B2D}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RobotArmLab.Forms", "RobotArmLab.Forms\RobotArmLab.Forms.csproj", "{3BA8D354-86C1-4042-9710-8D853C606D4F}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
