@@ -109,6 +109,22 @@ public class ArmDynamics
         return Small4x4.SolveSymmetricPositiveDefinite(m, b);
     }
 
+    /// <summary>
+    /// Ters dinamik: istenen ivme q̈ (rad/s²) için gereken tork τ = M(q) q̈ + c(q, q̇) + g(q) + τf(q̇), N·m.
+    /// Eş. (11)'in τ'ya göre çözülmüş biçimi; model tabanlı kontrolcüler kendi (tahmini) modelleriyle bunu çağırır.
+    /// </summary>
+    public double[] InverseDynamics(double[] q, double[] qd, double[] qdd)
+    {
+        double[] mqdd = Small4x4.Multiply(MassMatrix(q), qdd);
+        double[] c = CoriolisVector(q, qd);
+        double[] g = GravityVector(q);
+        double[] f = Friction(qd);
+        double[] tau = new double[4];
+        for (int i = 0; i < 4; i++)
+            tau[i] = mqdd[i] + c[i] + g[i] + f[i];
+        return tau;
+    }
+
     /// <summary>Kinetik enerji T = ½ q̇ᵀ M(q) q̇, J.</summary>
     public double KineticEnergy(double[] q, double[] qd)
     {

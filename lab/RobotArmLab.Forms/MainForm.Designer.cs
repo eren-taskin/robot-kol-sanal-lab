@@ -48,7 +48,9 @@ namespace RobotArmLab.Forms
             pageInput = new System.Windows.Forms.TabPage();
             inputPanel = new InputPanel();
             pageControl = new System.Windows.Forms.TabPage();
-            lblControlPlaceholder = new System.Windows.Forms.Label();
+            controlPanel = new ControlPanel();
+            pageTask = new System.Windows.Forms.TabPage();
+            taskPanel = new TaskPanel();
             splitRight = new System.Windows.Forms.SplitContainer();
             splitViews = new System.Windows.Forms.SplitContainer();
             view3DHost = new System.Windows.Forms.Panel();
@@ -101,14 +103,13 @@ namespace RobotArmLab.Forms
             splitMain.Panel2.Controls.Add(splitRight);
             splitMain.Size = new System.Drawing.Size(1280, 775);
             splitMain.SplitterDistance = 380;
-            //
-            // tabSettings
-            //
+            // tabSettings: Kol parametreleri, Ortam ve yük, Çözücü, Giriş, Kontrol (kapalı çevrim), Görev
             tabSettings.Controls.Add(pageParameters);
             tabSettings.Controls.Add(pageEnvironment);
             tabSettings.Controls.Add(pageSolver);
             tabSettings.Controls.Add(pageInput);
             tabSettings.Controls.Add(pageControl);
+            tabSettings.Controls.Add(pageTask);
             tabSettings.Dock = System.Windows.Forms.DockStyle.Fill;
             tabSettings.Name = "tabSettings";
             pageParameters.Controls.Add(propertyGrid);
@@ -137,14 +138,16 @@ namespace RobotArmLab.Forms
             pageInput.Text = "Giriş";
             inputPanel.Dock = System.Windows.Forms.DockStyle.Fill;
             inputPanel.Name = "inputPanel";
-            // pageControl: W3'te kapalı çevrim kontrol (hesaplanmış tork, süper-büküm kayan kip) buraya gelecek.
-            pageControl.Controls.Add(lblControlPlaceholder);
+            pageControl.Controls.Add(controlPanel);
             pageControl.Name = "pageControl";
             pageControl.Text = "Kontrol";
-            lblControlPlaceholder.Dock = System.Windows.Forms.DockStyle.Fill;
-            lblControlPlaceholder.Name = "lblControlPlaceholder";
-            lblControlPlaceholder.Text = "W3: kapalı çevrim";
-            lblControlPlaceholder.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
+            controlPanel.Dock = System.Windows.Forms.DockStyle.Fill;
+            controlPanel.Name = "controlPanel";
+            pageTask.Controls.Add(taskPanel);
+            pageTask.Name = "pageTask";
+            pageTask.Text = "Görev";
+            taskPanel.Dock = System.Windows.Forms.DockStyle.Fill;
+            taskPanel.Name = "taskPanel";
             //
             // splitRight: üstte 3B ve 2B görünümler, altta grafikler
             //
@@ -170,9 +173,7 @@ namespace RobotArmLab.Forms
             armView2D.Name = "armView2D";
             plotHost.Dock = System.Windows.Forms.DockStyle.Fill;
             plotHost.Name = "plotHost";
-            //
             // timer: ~30 ms'de bir simülasyonu ilerletir ve görünümleri yeniler
-            //
             timer.Interval = 30;
             timer.Tick += timer_Tick;
             saveCsvDialog.DefaultExt = "csv";
@@ -187,7 +188,7 @@ namespace RobotArmLab.Forms
             Controls.Add(splitMain);
             Controls.Add(toolStrip);
             Name = "MainForm";
-            Text = "Robot Kol Sanal Laboratuvarı — açık çevrim";
+            Text = "Robot Kol Sanal Laboratuvarı";
             FormClosing += MainForm_FormClosing;
             toolStrip.ResumeLayout(false);
             toolStrip.PerformLayout();
@@ -234,7 +235,9 @@ namespace RobotArmLab.Forms
         private System.Windows.Forms.TabPage pageInput;
         private InputPanel inputPanel;
         private System.Windows.Forms.TabPage pageControl;
-        private System.Windows.Forms.Label lblControlPlaceholder;
+        private ControlPanel controlPanel;
+        private System.Windows.Forms.TabPage pageTask;
+        private TaskPanel taskPanel;
         private System.Windows.Forms.SplitContainer splitRight;
         private System.Windows.Forms.SplitContainer splitViews;
         private System.Windows.Forms.Panel view3DHost;

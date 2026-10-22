@@ -67,6 +67,16 @@ public class DcMotor
         return Math.Max(-torqueLimitNm, Math.Min(torqueLimitNm, tau));
     }
 
+    /// <summary>
+    /// Ters motor modeli: q̇ hızında dönen eklemde τ torkunu üretmek için gereken gerilim, V:
+    /// V = R·τ/(N·Kt) + N·Ke·q̇. Kırpılmaz; ±Vmax doyumunu <see cref="Torque"/> uygular. Kontrolcünün tork
+    /// komutu bu formülle gerilime çevrilir (kapalı çevrimde "motor" eyleyici seçeneği).
+    /// </summary>
+    public double VoltageFor(double torqueNm, double jointSpeedRadPerS)
+    {
+        return ResistanceOhm * torqueNm / (GearRatio * TorqueConstantNmPerA) + GearRatio * BackEmfConstantVsPerRad * jointSpeedRadPerS;
+    }
+
     /// <summary>Eklem dururken (q̇ = 0) verilen gerilimde üretilen tork N·Kt·V/R, N·m (doyumsuz).</summary>
     public double StallTorqueNm(double voltageV)
     {

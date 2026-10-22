@@ -40,13 +40,13 @@ Formu tasarımcıda açmak için: Çözüm Gezgini'nde `MainForm.cs`'ye çift t�
 
 ---
 
-## 4. Elle denetim listesi (10 madde)
+## 4. Elle denetim listesi (16 madde)
 
 Her denemeye **Sıfırla** ile başlayın: ayarlar Sıfırla'ya basınca (veya yeni/bitmiş bir koşuda Başlat'a basınca) uygulanır. Varsayılanlar: Dünya, yük 0, RK4, h = 0,5 ms, tork modu, bütün girişler 0, bütün açılar 0°, süre 10 s, hız 1×. Parantez içindeki sayılar `lab/RobotArmLab.Tests/LabScenarioTests.cs` testlerinden gelir; ekranda son basamaklar biraz farklı olabilir.
 
 | # | Ne yapılır | Beklenen sonuç |
 |---|---|---|
-| 1 | Programı açın. | Solda beş sekme (Kol parametreleri, Ortam ve yük, Çözücü, Giriş, Kontrol), ortada 3B görünüm ve 2B yan görünüm, altta beş grafik sekmesi. Kol düz uzanmış (q = 0) görünür. "Kontrol" sekmesinde yalnız "W3: kapalı çevrim" yazar. 3B görünümde sol tuşla sürükleyince sahne döner, tekerlek yakınlaştırır. |
+| 1 | Programı açın. | Solda altı sekme (Kol parametreleri, Ortam ve yük, Çözücü, Giriş, Kontrol, Görev), ortada 3B görünüm ve 2B yan görünüm, altta yedi sekme (Açılar, Hızlar, Torklar, Takım konumu, Enerji, Hata, Karşılaştır). Kol düz uzanmış (q = 0) görünür. "Kontrol" sekmesinde "Açık çevrim" seçilidir. 3B görünümde sol tuşla sürükleyince sahne döner, tekerlek yakınlaştırır. |
 | 2 | Ortam ve yük → **Yörünge**, Hız **4×**, Sıfırla, Başlat. | Kol hiç kıpırdamaz; açı grafiği düz sıfır çizgisi. Yaklaşık 2,5 s sonra zaman t = 10,000 s'de durur, durum etiketi "Süre doldu." |
 | 3 | Ortam **Dünya**, girişler 0, Sıfırla, Başlat. | Kol kendi ağırlığıyla düşer ve hemen durur. Durum etiketi "Takım noktası zemine çarptı (t = 0,169 s)." (test: 0,169 s). 2B görünümde takım (kırmızı nokta) zemin çizgisine değmiştir. |
 | 4 | Aynısını **Ay** ile yapın (isterseniz **Mars** ile de). | Ay'da düşme yavaştır: "zemine çarptı (t = 0,515 s)" (test: 0,515 s, Dünya'nın ≈ 3 katı). Mars: t ≈ 0,295 s. Sürtünme (fv, fc) 0 yapılırsa oran tam √(9,81/1,62) ≈ 2,46 olur (0,181 s ve 0,445 s); sürtünme zayıf yerçekiminde ağırlığa göre daha büyük pay aldığı için Ay'daki düşüşü daha çok yavaşlatır. |
@@ -56,5 +56,18 @@ Her denemeye **Sıfırla** ile başlayın: ayarlar Sıfırla'ya basınca (veya y
 | 8 | Yörünge, tork modu, Eklem 1: Genlik **10** (N·m), q0 **−170**; Sıfırla, Başlat; Torklar τ sekmesi. | τ1 çizgisi 10'da değil **4,1 N·m**'de düzdür: grafik doyumdan sonra kola gerçekten uygulanan torku gösterir (test: 4,1 N·m). |
 | 9 | Varsayılan ayarlar, Yörünge, Hız **0,25×**, Başlat; birkaç saniye sonra Hız **2×** yapın. | 0,25×'te zaman etiketi gerçek saatten 4 kat yavaş, 2×'te 2 kat hızlı ilerler. Hız değişikliği Sıfırla gerektirmez, koşu kesilmeden uygulanır. **Duraklat** zamanı dondurur, **Başlat** kaldığı yerden sürdürür. |
 | 10 | Giriş tablosunda Eklem 2 q0 = **100** yazın, Sıfırla. Sonra 0'a geri alın, Sıfırla, birkaç saniye çalıştırıp **CSV kaydet** ile dosyayı kaydedin ve Not Defteri ile açın. | İlk adımda "Ayarlar geçersiz" penceresi: "Eklem 2 başlangıç açısı 100° eklem sınırlarının dışında [-85,944°, 85,944°]." Program çökmez. CSV'nin ilk satırı `t_s,q1_rad,…,E_J` başlığıdır; sayılarda ondalık ayırıcı **noktadır** (ör. `0.0005`), sütunlar virgülle ayrılır. |
+
+### Kapalı çevrim (W3) maddeleri
+
+Her maddeye program yeni açılmış gibi başlayın (veya Kol parametreleri → **Varsayılana dön**, Ortam **Dünya**, yük **0**). Ortak adım: **Kontrol → Kapalı çevrim**. Varsayılan görev: eklem uzayında beşinci derece yol, hedef [28,6°; −11,5°; 11,5°; 45,8°], T = 2 s; başlangıç açıları 0°, süre 10 s, Ts = 2 ms, algılayıcı kusursuz, eyleyici ideal tork. "Karşılaştır" sekmesinde **Karşılaştır (aynı deney)** düğmesi dört kontrolcüyü birkaç saniyede koşturur (pencere bu sırada bekler). Sayılar `lab/RobotArmLab.Tests/ClosedLoopScenarioTests.cs` testlerinden gelir.
+
+| # | Ne yapılır | Beklenen sonuç |
+|---|---|---|
+| 11 | Kapalı çevrim, kontrolcü **Hesaplanmış tork (CT)**, Sıfırla, Başlat. Açılar ve Hata sekmelerine bakın. Sonra Karşılaştır sekmesi → Karşılaştır. | Kesikli referans çizgileri düz çizgilerin tam üstündedir; Hata sekmesinde eğriler sıfıra yapışık. 3B görünümde hedefte yeşil küre. Tabloda hiçbir satırda not yok; en büyük hata PID ≈ **0,060 rad**, CT ≈ **1,7·10⁻⁵ rad**, STSMC ve FF-STSMC ≈ **1,4·10⁻⁴ rad**. |
+| 12 | Ortam ve yük → Yük **0,3 kg** (Kontrol → Tahmini yük **0** kalır). Karşılaştır. | Az tahmin: CT düşmez ama en büyük hata ≈ **0,61 rad**; STSMC bu pozdan düşmez, en büyük hata ≈ **1,3 rad**; FF-STSMC satırında not: "Eklem 3 sınırını aştı (t = 1,264 s)." |
+| 13 | Yük **0**, Kontrol → Tahmini yük **0,3**. Karşılaştır; sonra CT ile Sıfırla, Başlat, Torklar sekmesi. | Fazla tahmin: CT satırında "Takım noktası zemine çarptı (t = 0,423 s)."; tork komutu ±4,1 N·m arasında çırpınır. STSMC düşmez: en büyük hata < **0,05 rad** (≈ 0,041), takım hatası < **5 mm**. |
+| 14 | Tahmini yük **0**, Algılayıcı **Kodlayıcı (nicemleme)**, gürültü σ **1** mrad. Karşılaştır. | Titreşim sütunu: CT ≈ **4 800 N·m/s** ve doyum ≈ **3,2 s**; FF-STSMC ≈ **510 N·m/s**, doyum 0. Torklar sekmesinde CT'nin kesikli komutu kalın bir bant gibi görünür. **Tabloyu CSV kaydet** ile kaydedilen dosyanın ilk satırı `controller,rms_rad,…` başlığıdır. |
+| 15 | Algılayıcı **Kusursuz**, Eyleyici **Motor**. Kırmızı notu okuyun; Sıfırla. Sonra Çözücü → h **0,1** ms, Sıfırla, Başlat (CT). | Not: "Motor eyleyicisinde çözücü adımı h ≤ 0,2 ms olmalıdır …". h = 0,5 ms'de Sıfırla "Ayarlar geçersiz" penceresinde aynı nedeni gösterir. h = 0,1 ms'de koşu hatasız biter; CT en büyük hata ≈ **6,1·10⁻³ rad**. **CSV kaydet** dosyasında `qref1_rad`, `taucmd1_Nm` ve `payload_kg` sütunları doludur. |
+| 16 | Eyleyici **İdeal tork**, h **0,5** ms. Görev → **Çember izleme** (varsayılan: merkez 200/0/150 mm, r = 30 mm, düşey, tur 4 s); Karşılaştır. Sonra Yük **0,3 kg**, **Al-bırak** işaretli, kavrama anı **4** s; Karşılaştır; CT ile Başlat. | 3B görünümde yeşil çember yolu. Yüksüz: FF-STSMC takım hatası < **0,02 mm**. Al-bırakta: sarı yük küresi t = 4 s'de belirir; CT düşmez ama hatası ≈ **0,70 rad**'a çıkar; STSMC satırında "Eklem 4 sınırını aştı (t = 5,241 s)." |
 
 Bir madde beklendiği gibi değilse: maddenin numarasını, ekran görüntüsünü ve durum etiketindeki metni ekibe iletin.

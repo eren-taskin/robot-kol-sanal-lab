@@ -24,7 +24,8 @@ public class LabSession
     /// <summary>Dormand–Prince'te örneklerin (çıktının) alındığı aralık, s. Alt adımları çözücü kendisi seçer.</summary>
     public const double DormandPrinceOutputIntervalS = 0.005;
 
-    private OpenLoopSimulator simulator;
+    private OpenLoopSimulator simulator;   // kol (tesis); kapalı çevrimde de bu nesne ilerler
+    private ClosedLoopSimulator loop;       // kapalı çevrimde dolu, açık çevrimde null
     private double targetTimeS;   // duvar saatine göre ulaşılması gereken simülasyon zamanı, s
 
     // ---------------- Ayarlar (form bunları yazar, Reset bunları okur) ----------------
@@ -61,6 +62,12 @@ public class LabSession
 
     /// <summary>Başlangıç eklem hızları q̇0, rad/s (4 eleman).</summary>
     public double[] InitialQdRadPerS { get; set; }
+
+    /// <summary>Kapalı çevrim mi (true: kontrolcü görevi izler) yoksa açık çevrim mi (girişler doğrudan uygulanır).</summary>
+    public bool ClosedLoop { get; set; }
+
+    /// <summary>Kapalı çevrim ayarları: kontrolcü, tahmini yük, Ts, algılayıcı, eyleyici, görev.</summary>
+    public ClosedLoopSettings Closed { get; set; }
 
     /// <summary>Simülasyonun süresi, s. Bu zamana gelince koşu biter.</summary>
     public double DurationS { get; set; }
@@ -123,6 +130,7 @@ public class LabSession
             Inputs[i] = new JointInput();
         InitialQRad = new double[4];
         InitialQdRadPerS = new double[4];
+        Closed = new ClosedLoopSettings();
         DurationS = 10.0;
         SpeedFactor = 1.0;
         Reset();
@@ -160,12 +168,18 @@ public class LabSession
             initial.Q[i] = InitialQRad[i];
             initial.Qd[i] = InitialQdRadPerS[i];
         }
-        sim.Reset(initial);
+        string taskError;   // görev Validate'te denetlendiği için burada boş kalır
+        loop = ClosedLoop ? ClosedLoopBuilder.Build(Closed.Clone(), Parameters.Clone(), environment.GravityMps2,
+            InitialQRad, sim, out taskError) : null;
+        if (loop != null)
+            loop.Reset(initial);   // tesisi de sıfırlar; kare süresini Ts yapar
+        else
+            sim.Reset(initial);
 
         simulator = sim;
         targetTimeS = 0.0;
         History = new List<SimulationSample>();
-        History.Add(sim.CurrentSample());
+        History.Add(loop != null ? loop.CurrentSample() : sim.CurrentSample());
         return errors;
     }
 
@@ -182,11 +196,11 @@ public class LabSession
 
         double wall = Math.Min(wallClockSeconds, MaxWallClockPerCallS);
         targetTimeS = Math.Min(targetTimeS + wall * SpeedFactor, DurationS);
-        double halfStep = 0.5 * simulator.StepSizeS;
+        double halfStep = 0.5 * (loop != null ? loop.SamplePeriodS : simulator.StepSizeS);
         int steps = 0;
         while (!simulator.IsStopped && simulator.TimeS < targetTimeS - halfStep && steps < MaxStepsPerCall)
         {
-            fresh.AddRange(simulator.Step());
+            fresh.AddRange(loop != null ? loop.Step() : simulator.Step());
             steps++;
         }
         if (steps >= MaxStepsPerCall)
@@ -203,16 +217,18 @@ public class LabSession
     }
 
     /// <summary>Kolun şu anki eklem açıları q, rad (kopya).</summary>
-    public double[] CurrentQRad()
-    {
-        return (double[])simulator.State.Q.Clone();
-    }
+    public double[] CurrentQRad() { return (double[])simulator.State.Q.Clone(); }
 
-    /// <summary>Simülatörün kullandığı adım veya çıktı aralığı, s.</summary>
+    /// <summary>Simülatörün kullandığı adım veya çıktı aralığı, s. Kapalı çevrimde Dormand–Prince'in çıktı aralığı Ts'dir.</summary>
     public double EffectiveStepS()
     {
-        return SolverFactory.IsFixedStep(Solver) ? StepSizeS : DormandPrinceOutputIntervalS;
+        if (SolverFactory.IsFixedStep(Solver))
+            return StepSizeS;
+        return ClosedLoop && Closed != null ? Closed.SamplePeriodS : DormandPrinceOutputIntervalS;
     }
+
+    /// <summary>Aynı deneyi seçilen her kontrolcüyle baştan sona koşturur; oturum değişmez (bkz. ControllerComparison).</summary>
+    public List<ComparisonResult> CompareControllers(List<ControllerKind> kinds) { return ControllerComparison.Run(this, kinds); }
 
     /// <summary>Geçmişi CSV olarak yazar (nokta ondalık, virgül ayırıcı; bilgisayarın dil ayarından bağımsız).</summary>
     public void WriteCsv(TextWriter writer)

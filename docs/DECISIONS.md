@@ -390,3 +390,23 @@ The `dotnet.native.wasm` grows from 2.9 MB to 15.0 MB because it now holds the c
 - No stability-hint label on the solver tab: W1 has no such API, and the task said to show none in that case.
 
 **Consequences.** CI builds the whole lab solution on `windows-latest`; the Linux job builds only core and tests. How the window looks and behaves is checked by hand with `docs/WINDOWS_KURULUM.md`, whose numbers come from `LabScenarioTests`. W3 adds closed-loop control to the reserved "Kontrol" tab.
+
+## D16 – Motor actuator needs h ≤ 0.2 ms (W3)
+
+**Context.** In the closed-loop "motor" actuator the controller's torque command is turned into a voltage by the inverse DC motor model, V = R·τ/(N·Kt) + N·Ke·q̇_measured (`DcMotor.VoltageFor`). The voltage is held for Ts, and the plant torque comes from τ = N·Kt·(V − N·Ke·q̇)/R with the true q̇, so back-EMF and the 12 V limit act in the plant. At the default h = 0.5 ms every controller seemed to fail with an exact model: CT 0.30 rad, STSMC 1.13 rad steady error.
+
+**Finding.** Not a controller fault. Back-EMF adds a joint damping b = (N·Kt)(N·Ke)/R ≈ 0.85 N·m·s/rad. On the light wrist this is a fast mode with eigenvalue λ ≈ b/M ≈ 5600 1/s. RK4's real stability limit is hλ = −2.785, where its amplification factor R(hλ) = +1; at h = 0.5 ms, hλ ≈ −2.8. The integration found a spurious fixed point: the state showed q̇4 = −1.46 rad/s while q4 changed by 10⁻⁵ rad per millisecond. At h = 0.2 ms and 0.1 ms the same runs track to 4–6·10⁻⁵ rad (STSMC, FF-STSMC) and 1.2·10⁻³ rad (CT; start [0, −0.6, 0.3, 0.6]). An early hypothesis, that compensating back-EMF with the stale measured speed is positive velocity feedback with loop gain b·Ts/M44 ≈ 4.6, was wrong: with h = 0.1 ms the measured-speed inverse is stable. Compensating with q̇_ref instead lowers CT's peak error to 1.6·10⁻⁴ rad, but the brief asked for the inverse motor model, so the measured speed is kept.
+
+**Decision.** `ClosedLoopValidator` rejects the motor actuator with a fixed-step solver when h > 0.2 ms (hλ ≈ −1.1 for RK4, inside Euler's and Heun's −2 too), with a Turkish message saying why. The Kontrol tab shows the same reason as a note when "Motor" is selected. Dormand–Prince is not limited (it picks its own step).
+
+**Consequences.** Motor-mode runs are four times slower to simulate. `ClosedLoopSessionTests.MotorActuatorNeedsASmallSolverStep` and `ClosedLoopScenarioTests.C5_MotorActuator` pin the rule and the result (CT ≈ 6.1·10⁻³ rad from q0 = 0).
+
+## D17 – Half-sample prediction kept in the lean CT and STSMC (W3)
+
+**Context.** The old core evaluated the model of CT and STSMC at the state predicted for the middle of the hold (D7): q̄ = q + q̇·Δt/2 + a·Δt²/8, q̄̇ = q̇ + a·Δt/2. The W3 brief writes the textbook laws, τ = M̂(q)(…) + ĉ(q, q̇) + ĝ(q) + f̂(q̇), and asks for the old validated gains.
+
+**Decision.** Keep the prediction as a gain option `PredictHalfSample` (Turkish name "Yarım örnek öngörüsü"), on by default, in `ComputedTorqueGains` and `SuperTwistingGains`; with it off the law is exactly the textbook one. FF-STSMC does not use it: its model is evaluated on the reference, so no stale measurement enters the model. Reasons: the old gains (A1c, D13) were validated with the prediction on. On the wrist the friction time constant M44/d ≈ 1.8 ms is shorter than Ts = 2 ms, so a friction or gravity compensation held stale over the sample causes errors of several 10⁻³ rad (D7). The code is four lines in `HalfSample.Predict`, shared by both controllers.
+
+**Measured in the lean core** (window defaults, q0 = 0, quintic, exact model): CT max error 1.7·10⁻⁵ rad with the prediction, 3.2·10⁻⁴ rad without (19×). STSMC 1.4·10⁻⁴ rad with, 1.2·10⁻⁴ rad without: as in the old core (D13), the prediction does not help STSMC, whose error is set by the sampled sign(s) band; it is kept on for symmetry with CT and the validated gains.
+
+**Consequences.** The default CT tracks the quintic to 1.7·10⁻⁵ rad (C1). Students can switch the option off in the PropertyGrid and see the difference; W3.md and KONTROLCULER.md explain both forms.

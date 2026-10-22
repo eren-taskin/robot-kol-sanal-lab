@@ -136,7 +136,8 @@ public class LabSessionTests
             Assert.Equal(CsvExporter.Header, lines[0].TrimEnd('\r'));
             Assert.Equal(s.History.Count + 1, lines.Length);
             string[] cells = lines[lines.Length - 1].TrimEnd('\r').Split(',');
-            Assert.Equal(19, cells.Length);
+            Assert.Equal(32, cells.Length);
+            Assert.Equal("", cells[19]);   // open loop: no reference
             Assert.Contains(".", cells[0]);
             Assert.Equal(s.TimeS, double.Parse(cells[0], CultureInfo.InvariantCulture), 12);
         }

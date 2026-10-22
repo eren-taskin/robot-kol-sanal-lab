@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Windows.Forms;
 using System.Windows.Forms.Integration;
 using System.Windows.Input;
@@ -20,6 +21,8 @@ public class ArmView3D : UserControl
     private readonly SphereVisual3D[] joints = new SphereVisual3D[3];  // omuz, dirsek, bilek
     private readonly SphereVisual3D tool = new SphereVisual3D();
     private readonly SphereVisual3D payload = new SphereVisual3D();
+    private readonly SphereVisual3D target = new SphereVisual3D();   // tek noktalı hedef (yeşil küre)
+    private readonly TubeVisual3D path = new TubeVisual3D();         // çember yolu (yeşil ince boru)
 
     /// <summary>
     /// Sahneyi kurar: ışıklar, zemin ızgarası, taban, uzuvlar, eklemler, takım işareti, yük küresi ve kamera.
@@ -51,6 +54,14 @@ public class ArmView3D : UserControl
         payload.Fill = Brushes.Goldenrod;
         payload.Visible = false;
         viewport.Children.Add(payload);
+        target.Radius = 0.006;
+        target.Fill = Brushes.LimeGreen;
+        target.Visible = false;
+        viewport.Children.Add(target);
+        path.Diameter = 0.003;
+        path.Fill = Brushes.LimeGreen;
+        path.Visible = false;
+        viewport.Children.Add(path);
 
         SetUpCamera();
         ElementHost host = new ElementHost();
@@ -75,6 +86,22 @@ public class ArmView3D : UserControl
         tool.Center = ToWpf(points[4]);
         payload.Center = ToWpf(points[4]);
         payload.Visible = payloadKg > 0.0;
+    }
+
+    /// <summary>
+    /// Görevin hedefini çizer (m): tek nokta yeşil küre, birden çok nokta yeşil yol (çember). Boş liste hedefi gizler
+    /// (açık çevrim). Noktalar <see cref="RobotArmLab.Core.Session.TaskGeometry"/>'den gelir.
+    /// </summary>
+    public void SetTarget(List<Point3> points)
+    {
+        target.Visible = points.Count == 1;
+        path.Visible = points.Count > 1;
+        if (points.Count == 1)
+            target.Center = ToWpf(points[0]);
+        Point3DCollection line = new Point3DCollection();
+        for (int k = 0; points.Count > 1 && k < points.Count; k++)
+            line.Add(ToWpf(points[k]));
+        path.Path = line;
     }
 
     // Kamera kolun önüne ve biraz yukarısına konur, tabanın 15 cm üstüne bakar. z ekseni yukarıdır (taban çerçevesi).

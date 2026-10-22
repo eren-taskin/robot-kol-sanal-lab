@@ -22,6 +22,7 @@ public partial class MainForm : Form
     private readonly LabSession session = new LabSession();
     private readonly Stopwatch clock = new Stopwatch();   // iki zamanlayıcı tıkı arasında geçen gerçek süre
     private PlotPanel plots;
+    private ComparePanel comparePanel;
     private ArmView3D view3D;   // 3B görünüm açılamadıysa null
     private string viewNote = "";   // 3B görünüm açılamadıysa nedeni (durum etiketinde gösterilir)
 
@@ -43,6 +44,9 @@ public partial class MainForm : Form
         plots = new PlotPanel();
         plots.Dock = DockStyle.Fill;
         plotHost.Controls.Add(plots);
+        comparePanel = new ComparePanel();
+        comparePanel.PrepareSession = ApplyControlsToSession;
+        plots.AddPage("Karşılaştır", comparePanel);
         try
         {
             view3D = new ArmView3D();
@@ -64,14 +68,25 @@ public partial class MainForm : Form
         environmentPanel.LoadFrom(session);
         solverPanel.LoadFrom(session);
         inputPanel.LoadFrom(session);
+        controlPanel.LoadFrom(session);
+        taskPanel.LoadFrom(session);
+    }
+
+    // Bütün sekmelerdeki değerleri oturuma yazar ve oturumu döndürür (Karşılaştır paneli de bunu çağırır).
+    private LabSession ApplyControlsToSession()
+    {
+        environmentPanel.ApplyTo(session);
+        solverPanel.ApplyTo(session);
+        inputPanel.ApplyTo(session);
+        controlPanel.ApplyTo(session);
+        taskPanel.ApplyTo(session);
+        return session;
     }
 
     // Kontrollerdeki değerleri oturuma yazar ve simülasyonu baştan kurar. Ayar hatalıysa hataları gösterir.
     private bool ResetFromControls()
     {
-        environmentPanel.ApplyTo(session);
-        solverPanel.ApplyTo(session);
-        inputPanel.ApplyTo(session);
+        ApplyControlsToSession();
         List<string> errors = session.Reset();
         if (errors.Count > 0)
         {
@@ -80,8 +95,12 @@ public partial class MainForm : Form
             lblStatus.Text = errors[0];
             return false;
         }
+        plots.Parameters = session.Parameters;
+        plots.SetClosedLoop(session.ClosedLoop);
         plots.Clear();
         plots.Append(session.History);
+        if (view3D != null)
+            view3D.SetTarget(session.ClosedLoop ? TaskGeometry.Path(session.Closed, session.Parameters) : new List<Point3>());
         ShowState();
         return true;
     }
@@ -126,7 +145,7 @@ public partial class MainForm : Form
     private void ShowState()
     {
         Point3[] points = session.CurrentJointPositions();
-        double payloadKg = session.Payload.MassKg;
+        double payloadKg = session.History[session.History.Count - 1].PayloadKg;   // al-bırakta koşu sırasında değişir
         armView2D.SetPose(points, session.CurrentQRad()[0], payloadKg);
         if (view3D != null)
             view3D.SetPose(points, payloadKg);

@@ -31,6 +31,8 @@ public static class SettingsValidator
         CheckInputs(s.Inputs, errors);
         if (errors.Count == 0)
             CheckInitialState(s, errors);   // poz denetimi geçerli parametre ister
+        if (errors.Count == 0 && s.ClosedLoop)
+            ClosedLoopValidator.Check(s, errors);   // görev denetimi geçerli başlangıç pozu ister
         return errors;
     }
 

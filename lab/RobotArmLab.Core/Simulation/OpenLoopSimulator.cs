@@ -93,6 +93,16 @@ public class OpenLoopSimulator
     }
 
     /// <summary>
+    /// Yükü koşu sırasında değiştirir (al-bırak görevi): model yeni yükle yeniden kurulur, durum ve zaman korunur.
+    /// Kol yükü anında kavramış gibi davranır; kontrolcünün tahmini yükü bundan etkilenmez.
+    /// </summary>
+    public void ChangePayload(double massKg)
+    {
+        Payload = new Payload(massKg);
+        dynamics = new ArmDynamics(Payload.ApplyTo(Parameters), Environment.GravityMps2);
+    }
+
+    /// <summary>
     /// Bir ekran karesi kadar ilerler: FrameTimeS / StepSizeS çözücü adımı atar, her adımdan sonra hata
     /// durumlarını denetler. Her adımın sonundaki örneği listeye ekler. Hata olursa durur ve nedeni kaydeder.
     /// </summary>
@@ -134,6 +144,7 @@ public class OpenLoopSimulator
         s.ToolZ = tool.Z;
         s.KineticEnergyJ = dynamics.KineticEnergy(State.Q, State.Qd);
         s.PotentialEnergyJ = dynamics.PotentialEnergy(State.Q);
+        s.PayloadKg = Payload.MassKg;
         return s;
     }
 

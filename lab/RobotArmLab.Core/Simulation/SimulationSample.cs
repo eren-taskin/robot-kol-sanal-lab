@@ -15,6 +15,15 @@ public class SimulationSample
     /// <summary>Eklemlere uygulanan (doyumdan sonraki) motor torku τ, N·m.</summary>
     public double[] Tau;
 
+    /// <summary>Referans eklem açıları q_ref, rad. Açık çevrimde null.</summary>
+    public double[] QRef;
+
+    /// <summary>Referans eklem hızları q̇_ref, rad/s. Açık çevrimde null.</summary>
+    public double[] QdRef;
+
+    /// <summary>Kontrolcünün bu örnekleme aralığındaki tork komutu, N·m (doyumdan önce). Açık çevrimde null.</summary>
+    public double[] TauCommand;
+
     /// <summary>Takım noktasının x konumu, m.</summary>
     public double ToolX;
 
@@ -23,6 +32,9 @@ public class SimulationSample
 
     /// <summary>Takım noktasının z konumu (yükseklik), m.</summary>
     public double ToolZ;
+
+    /// <summary>Takım noktasındaki (gerçek) yük kütlesi, kg. Al-bırak görevinde koşu sırasında değişir.</summary>
+    public double PayloadKg;
 
     /// <summary>Kinetik enerji T = ½ q̇ᵀ M q̇, J.</summary>
     public double KineticEnergyJ;

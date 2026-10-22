@@ -13,10 +13,15 @@ namespace RobotArmLab.Core.Session;
 /// </summary>
 public static class CsvExporter
 {
-    /// <summary>Başlık satırı: her sütunun adı ve birimi.</summary>
+    /// <summary>
+    /// Başlık satırı: her sütunun adı ve birimi. Referans (qref, qdref) ve tork komutu (taucmd) sütunları yalnız
+    /// kapalı çevrimde doludur; açık çevrimde boş bırakılır (sütun sayısı her satırda aynıdır).
+    /// </summary>
     public const string Header =
         "t_s,q1_rad,q2_rad,q3_rad,q4_rad,qd1_radps,qd2_radps,qd3_radps,qd4_radps," +
-        "tau1_Nm,tau2_Nm,tau3_Nm,tau4_Nm,x_m,y_m,z_m,T_J,V_J,E_J";
+        "tau1_Nm,tau2_Nm,tau3_Nm,tau4_Nm,x_m,y_m,z_m,T_J,V_J,E_J," +
+        "qref1_rad,qref2_rad,qref3_rad,qref4_rad,qdref1_radps,qdref2_radps,qdref3_radps,qdref4_radps," +
+        "taucmd1_Nm,taucmd2_Nm,taucmd3_Nm,taucmd4_Nm,payload_kg";
 
     /// <summary>Başlığı ve her örnek için bir satırı yazar.</summary>
     public static void Write(List<SimulationSample> samples, TextWriter writer)
@@ -40,6 +45,10 @@ public static class CsvExporter
         sb.Append(',').Append(Number(s.KineticEnergyJ));
         sb.Append(',').Append(Number(s.PotentialEnergyJ));
         sb.Append(',').Append(Number(s.TotalEnergyJ));
+        AppendOptional(sb, s.QRef);
+        AppendOptional(sb, s.QdRef);
+        AppendOptional(sb, s.TauCommand);
+        sb.Append(',').Append(Number(s.PayloadKg));
         return sb.ToString();
     }
 
@@ -47,6 +56,15 @@ public static class CsvExporter
     {
         for (int i = 0; i < values.Length; i++)
             sb.Append(',').Append(Number(values[i]));
+    }
+
+    // Dizi yoksa (açık çevrim) 4 boş hücre yazar.
+    private static void AppendOptional(StringBuilder sb, double[] values)
+    {
+        if (values == null)
+            sb.Append(",,,,");
+        else
+            AppendAll(sb, values);
     }
 
     // 10 anlamlı basamak; "G" biçimi gerekirse 1E-05 gibi bilimsel gösterim kullanır.
